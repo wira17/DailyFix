@@ -18,11 +18,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $telepon       = sanitize($_POST['telepon'] ?? '');
         $jabatan_id    = (int)($_POST['jabatan_id']    ?? 0) ?: null;
         $dept_id       = (int)($_POST['departemen_id'] ?? 0) ?: null;
-        $lokasi_id     = (int)($_POST['lokasi_id']     ?? 0) ?: null;
         $role          = $_POST['role']   ?? 'karyawan';
         $status_baru   = $_POST['status'] ?? 'aktif';
         $tgl_bergabung = $_POST['tanggal_bergabung'] ?: null;
         $password      = $_POST['password'] ?? '';
+
+        // ── Ambil array lokasi_id yang dipilih ──
+        $lokasi_ids = isset($_POST['lokasi_id']) ? array_map('intval', (array)$_POST['lokasi_id']) : [];
+        $lokasi_ids = array_filter($lokasi_ids); // buang 0
 
         if (!$nik || !$nama || !$email) {
             redirect(APP_URL.'/pages/karyawan.php', 'Field wajib diisi!', 'danger');
@@ -37,11 +40,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if ($password) {
                 $hash = password_hash($password, PASSWORD_DEFAULT);
-                $db->prepare("UPDATE karyawan SET nik=?,nama=?,email=?,telepon=?,jabatan_id=?,departemen_id=?,lokasi_id=?,role=?,status=?,tanggal_bergabung=?,password=? WHERE id=? AND perusahaan_id=?")
-                   ->execute([$nik,$nama,$email,$telepon,$jabatan_id,$dept_id,$lokasi_id,$role,$status_baru,$tgl_bergabung,$hash,$id,$user['perusahaan_id']]);
+                $db->prepare("UPDATE karyawan SET nik=?,nama=?,email=?,telepon=?,jabatan_id=?,departemen_id=?,role=?,status=?,tanggal_bergabung=?,password=? WHERE id=? AND perusahaan_id=?")
+                   ->execute([$nik,$nama,$email,$telepon,$jabatan_id,$dept_id,$role,$status_baru,$tgl_bergabung,$hash,$id,$user['perusahaan_id']]);
             } else {
-                $db->prepare("UPDATE karyawan SET nik=?,nama=?,email=?,telepon=?,jabatan_id=?,departemen_id=?,lokasi_id=?,role=?,status=?,tanggal_bergabung=? WHERE id=? AND perusahaan_id=?")
-                   ->execute([$nik,$nama,$email,$telepon,$jabatan_id,$dept_id,$lokasi_id,$role,$status_baru,$tgl_bergabung,$id,$user['perusahaan_id']]);
+                $db->prepare("UPDATE karyawan SET nik=?,nama=?,email=?,telepon=?,jabatan_id=?,departemen_id=?,role=?,status=?,tanggal_bergabung=? WHERE id=? AND perusahaan_id=?")
+                   ->execute([$nik,$nama,$email,$telepon,$jabatan_id,$dept_id,$role,$status_baru,$tgl_bergabung,$id,$user['perusahaan_id']]);
+            }
+
+            // ── Update relasi lokasi (hapus lama, insert baru) ──
+            $db->prepare("DELETE FROM karyawan_lokasi WHERE karyawan_id=?")->execute([$id]);
+            if (!empty($lokasi_ids)) {
+                $stmtLok = $db->prepare("INSERT IGNORE INTO karyawan_lokasi (karyawan_id, lokasi_id) VALUES (?,?)");
+                foreach ($lokasi_ids as $lid) {
+                    $stmtLok->execute([$id, $lid]);
+                }
             }
 
             // ── Kirim email jika baru diaktifkan (nonaktif → aktif) ──
@@ -75,8 +87,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 <li>Selesai — Anda berhasil masuk! ✅</li>
                             </ol>
                         </div>
-
-                       
                     </div>
                     <div style="background:#f8fafc;padding:14px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;text-align:center;font-size:11.5px;color:#94a3b8">
                         © ' . date('Y') . ' DailyFix — Sistem Absensi Digital
@@ -92,31 +102,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Tambah karyawan baru dari admin (langsung aktif)
             if (!$password) redirect(APP_URL.'/pages/karyawan.php','Password wajib diisi untuk karyawan baru!','danger');
             $hash = password_hash($password, PASSWORD_DEFAULT);
-            $db->prepare("INSERT INTO karyawan (perusahaan_id,nik,nama,email,password,telepon,jabatan_id,departemen_id,lokasi_id,role,status,tanggal_bergabung) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
-               ->execute([$user['perusahaan_id'],$nik,$nama,$email,$hash,$telepon,$jabatan_id,$dept_id,$lokasi_id,$role,$status_baru,$tgl_bergabung]);
+            $db->prepare("INSERT INTO karyawan (perusahaan_id,nik,nama,email,password,telepon,jabatan_id,departemen_id,role,status,tanggal_bergabung) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+               ->execute([$user['perusahaan_id'],$nik,$nama,$email,$hash,$telepon,$jabatan_id,$dept_id,$role,$status_baru,$tgl_bergabung]);
+            $newId = (int)$db->lastInsertId();
+
+            // ── Insert relasi lokasi ──
+            if ($newId && !empty($lokasi_ids)) {
+                $stmtLok = $db->prepare("INSERT IGNORE INTO karyawan_lokasi (karyawan_id, lokasi_id) VALUES (?,?)");
+                foreach ($lokasi_ids as $lid) {
+                    $stmtLok->execute([$newId, $lid]);
+                }
+            }
+
             redirect(APP_URL.'/pages/karyawan.php','Karyawan berhasil ditambahkan.','success');
         }
 
     } elseif ($action === 'delete') {
+        $delId = (int)$_POST['id'];
+        // Hapus relasi lokasi dulu
+        $db->prepare("DELETE FROM karyawan_lokasi WHERE karyawan_id=?")->execute([$delId]);
         $db->prepare("DELETE FROM karyawan WHERE id=? AND perusahaan_id=? AND id != ?")
-           ->execute([(int)$_POST['id'], $user['perusahaan_id'], $user['id']]);
+           ->execute([$delId, $user['perusahaan_id'], $user['id']]);
         redirect(APP_URL.'/pages/karyawan.php','Karyawan berhasil dihapus.','success');
     }
 }
 
 $edit = null;
+$editLokasis = []; // lokasi_id yang sudah dipilih untuk karyawan yang diedit
 if (isset($_GET['edit'])) {
     $stmt = $db->prepare("SELECT * FROM karyawan WHERE id=? AND perusahaan_id=?");
     $stmt->execute([(int)$_GET['edit'], $user['perusahaan_id']]);
     $edit = $stmt->fetch();
+
+    if ($edit) {
+        // Ambil lokasi yang sudah terpilih
+        $stmtEl = $db->prepare("SELECT lokasi_id FROM karyawan_lokasi WHERE karyawan_id=?");
+        $stmtEl->execute([$edit['id']]);
+        $editLokasis = array_column($stmtEl->fetchAll(), 'lokasi_id');
+    }
 }
 
 $search = sanitize($_GET['q'] ?? '');
-$sql = "SELECT k.*, j.nama as jabatan_nama, d.nama as dept_nama, l.nama as lokasi_nama
+
+// Query utama — gabungkan nama-nama lokasi dengan GROUP_CONCAT
+$sql = "SELECT k.*, j.nama as jabatan_nama, d.nama as dept_nama,
+               GROUP_CONCAT(l.nama ORDER BY l.nama SEPARATOR ', ') as lokasi_nama
         FROM karyawan k
         LEFT JOIN jabatan j ON j.id=k.jabatan_id
         LEFT JOIN departemen d ON d.id=k.departemen_id
-        LEFT JOIN lokasi l ON l.id=k.lokasi_id
+        LEFT JOIN karyawan_lokasi kl ON kl.karyawan_id=k.id
+        LEFT JOIN lokasi l ON l.id=kl.lokasi_id
         WHERE k.perusahaan_id=?";
 $params = [$user['perusahaan_id']];
 if ($search) {
@@ -124,7 +159,7 @@ if ($search) {
     $s = '%'.$search.'%';
     $params = array_merge($params, [$s,$s,$s]);
 }
-$sql .= " ORDER BY k.status ASC, k.nama ASC"; // nonaktif duluan supaya admin mudah lihat
+$sql .= " GROUP BY k.id ORDER BY k.status ASC, k.nama ASC";
 $stmt = $db->prepare($sql); $stmt->execute($params);
 $karyawans = $stmt->fetchAll();
 
@@ -157,6 +192,77 @@ include __DIR__ . '/../includes/header.php';
     padding:6px 14px;border-radius:8px;font-size:12px;font-weight:700;
     cursor:pointer;font-family:inherit;text-decoration:none;
     display:inline-flex;align-items:center;gap:6px;
+}
+
+/* ── Multi-Lokasi Checkbox Pills ── */
+.lokasi-picker {
+    border:1px solid var(--border-color, #e2e8f0);
+    border-radius:10px;
+    padding:10px 12px;
+    max-height:160px;
+    overflow-y:auto;
+    background:#fff;
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    scrollbar-width:thin;
+}
+.lokasi-picker:focus-within {
+    border-color:#0f4c81;
+    box-shadow:0 0 0 3px rgba(15,76,129,.12);
+}
+.lokasi-chip {
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    cursor:pointer;
+    user-select:none;
+}
+.lokasi-chip input[type=checkbox] { display:none; }
+.lokasi-chip-label {
+    display:inline-flex;
+    align-items:center;
+    gap:5px;
+    padding:5px 12px;
+    border-radius:20px;
+    font-size:12.5px;
+    font-weight:600;
+    background:#f1f5f9;
+    color:#475569;
+    border:1.5px solid #e2e8f0;
+    transition:all .15s;
+    cursor:pointer;
+}
+.lokasi-chip input[type=checkbox]:checked + .lokasi-chip-label {
+    background:#eff6ff;
+    color:#1d4ed8;
+    border-color:#93c5fd;
+}
+.lokasi-chip-label .chip-dot {
+    width:7px;height:7px;border-radius:50%;
+    background:#cbd5e1;flex-shrink:0;
+    transition:background .15s;
+}
+.lokasi-chip input[type=checkbox]:checked + .lokasi-chip-label .chip-dot {
+    background:#3b82f6;
+}
+.lokasi-empty {
+    font-size:12.5px;color:#94a3b8;padding:4px;
+}
+.lokasi-selected-count {
+    font-size:11.5px;color:#64748b;margin-top:4px;font-weight:600;
+}
+.lokasi-selected-count span { color:#0f4c81;font-weight:700; }
+
+/* Badge lokasi di tabel */
+.badge-lokasi {
+    display:inline-flex;align-items:center;gap:4px;
+    background:#eff6ff;color:#1d4ed8;
+    padding:2px 8px;border-radius:20px;font-size:11.5px;font-weight:600;
+    white-space:nowrap;
+}
+.lokasi-list-cell {
+    display:flex;flex-wrap:wrap;gap:4px;
 }
 </style>
 
@@ -230,11 +336,21 @@ include __DIR__ . '/../includes/header.php';
                             </div>
                         </div>
                     </td>
-                    <td>
+                    <td class="hide-mobile">
                         <div style="font-size:13px"><?= htmlspecialchars($k['jabatan_nama']??'-') ?></div>
                         <div style="font-size:12px;color:var(--text-muted)"><?= htmlspecialchars($k['dept_nama']??'-') ?></div>
                     </td>
-                    <td style="font-size:13px"><?= htmlspecialchars($k['lokasi_nama']??'-') ?></td>
+                    <td class="hide-mobile">
+                        <?php if (!empty($k['lokasi_nama'])): ?>
+                            <div class="lokasi-list-cell">
+                                <?php foreach(explode(', ', $k['lokasi_nama']) as $ln): ?>
+                                <span class="badge-lokasi"><i class="fas fa-map-marker-alt" style="font-size:9px"></i><?= htmlspecialchars(trim($ln)) ?></span>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php else: ?>
+                            <span style="color:#94a3b8;font-size:12.5px">—</span>
+                        <?php endif; ?>
+                    </td>
                     <td class="hide-mobile"><?= badgeStatus($k['role']) ?></td>
                     <td><?= badgeStatus($k['status']) ?></td>
                     <td class="hide-mobile" style="font-size:12.5px"><?= $k['tanggal_bergabung'] ? date('d/m/Y',strtotime($k['tanggal_bergabung'])) : '-' ?></td>
@@ -251,7 +367,6 @@ include __DIR__ . '/../includes/header.php';
                                 <input type="hidden" name="telepon" value="<?= htmlspecialchars($k['telepon'] ?? '') ?>">
                                 <input type="hidden" name="jabatan_id" value="<?= $k['jabatan_id'] ?? '' ?>">
                                 <input type="hidden" name="departemen_id" value="<?= $k['departemen_id'] ?? '' ?>">
-                                <input type="hidden" name="lokasi_id" value="<?= $k['lokasi_id'] ?? '' ?>">
                                 <input type="hidden" name="role" value="<?= $k['role'] ?>">
                                 <input type="hidden" name="status" value="aktif">
                                 <input type="hidden" name="tanggal_bergabung" value="<?= $k['tanggal_bergabung'] ?? '' ?>">
@@ -326,7 +441,7 @@ include __DIR__ . '/../includes/header.php';
                         <input type="date" name="tanggal_bergabung" class="form-control" value="<?= $edit['tanggal_bergabung']??'' ?>">
                     </div>
                 </div>
-                <div class="form-row cols-3">
+                <div class="form-row cols-2">
                     <div class="form-group">
                         <label class="form-label">Jabatan</label>
                         <select name="jabatan_id" class="form-select">
@@ -345,16 +460,35 @@ include __DIR__ . '/../includes/header.php';
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">Lokasi Default</label>
-                        <select name="lokasi_id" class="form-select">
-                            <option value="">-- Pilih Lokasi --</option>
-                            <?php foreach($lokasis as $l): ?>
-                            <option value="<?= $l['id'] ?>" <?= ($edit['lokasi_id']??'')==$l['id']?'selected':'' ?>><?= htmlspecialchars($l['nama']) ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
                 </div>
+
+                <!-- ── MULTI-LOKASI PICKER ── -->
+                <div class="form-group">
+                    <label class="form-label">
+                        Lokasi yang Diizinkan
+                        <span style="font-size:11px;font-weight:400;color:#64748b;margin-left:4px">(bisa pilih lebih dari satu)</span>
+                    </label>
+                    <?php if (empty($lokasis)): ?>
+                        <div class="lokasi-picker"><span class="lokasi-empty"><i class="fas fa-map-marker-alt"></i> Belum ada lokasi aktif — tambahkan di menu Lokasi terlebih dahulu.</span></div>
+                    <?php else: ?>
+                        <div class="lokasi-picker" id="lokasiPicker">
+                            <?php foreach($lokasis as $l): ?>
+                            <?php $checked = in_array($l['id'], $editLokasis); ?>
+                            <label class="lokasi-chip">
+                                <input type="checkbox" name="lokasi_id[]" value="<?= $l['id'] ?>" <?= $checked ? 'checked' : '' ?> onchange="updateLokasiCount()">
+                                <span class="lokasi-chip-label">
+                                    <span class="chip-dot"></span>
+                                    <?= htmlspecialchars($l['nama']) ?>
+                                </span>
+                            </label>
+                            <?php endforeach; ?>
+                        </div>
+                        <div class="lokasi-selected-count" id="lokasiCount">
+                            <span id="lokasiCountNum"><?= count($editLokasis) ?></span> lokasi dipilih
+                        </div>
+                    <?php endif; ?>
+                </div>
+
                 <div class="form-row cols-2">
                     <div class="form-group">
                         <label class="form-label">Role</label>
@@ -391,6 +525,12 @@ include __DIR__ . '/../includes/header.php';
 function openModal() { document.getElementById('modalKaryawan').classList.add('open'); }
 function closeModal() { document.getElementById('modalKaryawan').classList.remove('open'); history.replaceState(null,'',window.location.pathname); }
 <?php if($edit): ?>window.addEventListener('load',()=>openModal());<?php endif; ?>
+
+function updateLokasiCount() {
+    const checked = document.querySelectorAll('#lokasiPicker input[type=checkbox]:checked').length;
+    const el = document.getElementById('lokasiCountNum');
+    if (el) el.textContent = checked;
+}
 </script>
 
 <?php include __DIR__ . '/../includes/footer.php'; ?>

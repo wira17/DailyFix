@@ -11,24 +11,39 @@ $bulan  = $_GET['bulan'] ?? date('m');
 $tahun  = $_GET['tahun'] ?? date('Y');
 $period = $tahun . '-' . str_pad($bulan, 2, '0', STR_PAD_LEFT);
 
-$stmt = $db->prepare("SELECT a.*, s.nama as shift_nama, s.jam_masuk, s.jam_keluar 
-    FROM absensi a 
+$stmt = $db->prepare("SELECT a.*, s.nama as shift_nama, s.jam_masuk, s.jam_keluar,
+        l.nama as lokasi_nama
+    FROM absensi a
     LEFT JOIN shift s ON s.id = a.shift_id
+    LEFT JOIN lokasi l ON l.id = a.lokasi_id
     WHERE a.karyawan_id = ? AND DATE_FORMAT(a.tanggal,'%Y-%m') = ?
     ORDER BY a.tanggal DESC");
 $stmt->execute([$user['id'], $period]);
 $absensis = $stmt->fetchAll();
 
 // Summary
-$summary = ['hadir'=>0,'terlambat'=>0,'absen'=>0,'izin'=>0,'sakit'=>0,'total_terlambat_detik'=>0,'total_durasi'=>0];
+$summary = [
+    'hadir'               => 0,
+    'terlambat'           => 0,
+    'pulang_cepat'        => 0,
+    'absen'               => 0,
+    'izin'                => 0,
+    'sakit'               => 0,
+    'total_terlambat_detik'   => 0,
+    'total_pulang_cepat_detik'=> 0,
+    'total_durasi'        => 0,
+];
 foreach ($absensis as $a) {
     if (in_array($a['status_kehadiran'],['hadir','terlambat'])) $summary['hadir']++;
     if ($a['status_kehadiran']==='terlambat') $summary['terlambat']++;
-    if ($a['status_kehadiran']==='absen') $summary['absen']++;
-    if ($a['status_kehadiran']==='izin') $summary['izin']++;
-    if ($a['status_kehadiran']==='sakit') $summary['sakit']++;
-    $summary['total_terlambat_detik'] += (int)$a['terlambat_detik'];
-    $summary['total_durasi'] += (int)$a['durasi_kerja'];
+    if ($a['status_kehadiran']==='absen')     $summary['absen']++;
+    if ($a['status_kehadiran']==='izin')      $summary['izin']++;
+    if ($a['status_kehadiran']==='sakit')     $summary['sakit']++;
+    $pc = (int)($a['pulang_cepat_detik'] ?? 0);
+    if ($pc > 0) $summary['pulang_cepat']++;
+    $summary['total_terlambat_detik']    += (int)($a['terlambat_detik'] ?? 0);
+    $summary['total_pulang_cepat_detik'] += $pc;
+    $summary['total_durasi']             += (int)($a['durasi_kerja'] ?? 0);
 }
 
 $months = [];
@@ -49,22 +64,29 @@ include __DIR__ . '/../includes/header.php';
             <div class="form-group" style="margin:0">
                 <label class="form-label" style="margin-bottom:4px">Bulan</label>
                 <select name="bulan" class="form-select" style="min-width:130px">
-                    <?php foreach($months as $m=>$n): ?><option value="<?= $m ?>" <?= $m==$bulan?'selected':'' ?>><?= $n ?></option><?php endforeach; ?>
+                    <?php foreach($months as $m=>$n): ?>
+                    <option value="<?= $m ?>" <?= $m==$bulan?'selected':'' ?>><?= $n ?></option>
+                    <?php endforeach; ?>
                 </select>
             </div>
             <div class="form-group" style="margin:0">
                 <label class="form-label" style="margin-bottom:4px">Tahun</label>
                 <select name="tahun" class="form-select">
-                    <?php for($y=date('Y');$y>=2024;$y--): ?><option value="<?= $y ?>" <?= $y==$tahun?'selected':'' ?>><?= $y ?></option><?php endfor; ?>
+                    <?php for($y=date('Y');$y>=2024;$y--): ?>
+                    <option value="<?= $y ?>" <?= $y==$tahun?'selected':'' ?>><?= $y ?></option>
+                    <?php endfor; ?>
                 </select>
             </div>
             <button type="submit" class="btn btn-primary"><i class="fas fa-filter"></i> Filter</button>
+            <a href="../api/export_rekap.php?bulan=<?= $bulan ?>&tahun=<?= $tahun ?>" class="btn btn-outline">
+                <i class="fas fa-download"></i> Export CSV
+            </a>
         </form>
     </div>
 </div>
 
 <!-- Statistik -->
-<div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px">
+<div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:12px">
     <div class="stat-card">
         <div class="stat-icon green"><i class="fas fa-calendar-check"></i></div>
         <div><div class="stat-value"><?= $summary['hadir'] ?></div><div class="stat-label">Total Hadir</div></div>
@@ -74,8 +96,16 @@ include __DIR__ . '/../includes/header.php';
         <div><div class="stat-value"><?= $summary['terlambat'] ?></div><div class="stat-label">Kali Terlambat</div></div>
     </div>
     <div class="stat-card">
+        <div class="stat-icon" style="background:#f3e8ff;color:#7c3aed"><i class="fas fa-person-running"></i></div>
+        <div><div class="stat-value"><?= $summary['pulang_cepat'] ?></div><div class="stat-label">Kali Pulang Cepat</div></div>
+    </div>
+    <div class="stat-card">
         <div class="stat-icon red"><i class="fas fa-calendar-xmark"></i></div>
         <div><div class="stat-value"><?= $summary['absen'] ?></div><div class="stat-label">Absen</div></div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon blue"><i class="fas fa-file-lines"></i></div>
+        <div><div class="stat-value"><?= $summary['izin'] + $summary['sakit'] ?></div><div class="stat-label">Izin / Sakit</div></div>
     </div>
     <div class="stat-card">
         <div class="stat-icon blue"><i class="fas fa-business-time"></i></div>
@@ -83,19 +113,27 @@ include __DIR__ . '/../includes/header.php';
     </div>
 </div>
 
-<?php if ($summary['total_terlambat_detik'] > 0): ?>
-<div class="alert alert-warning" style="margin-bottom:20px">
-    <i class="fas fa-clock"></i>
-    Total keterlambatan bulan ini: <strong><?= formatTerlambat($summary['total_terlambat_detik']) ?></strong>
+<!-- Alert total terlambat & pulang cepat -->
+<?php if ($summary['total_terlambat_detik'] > 0 || $summary['total_pulang_cepat_detik'] > 0): ?>
+<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:20px">
+    <?php if ($summary['total_terlambat_detik'] > 0): ?>
+    <div style="flex:1;min-width:220px;background:#fffbeb;border:1px solid #fcd34d;border-left:4px solid #f59e0b;border-radius:10px;padding:12px 16px;font-size:13.5px;color:#92400e;display:flex;align-items:center;gap:10px">
+        <i class="fas fa-clock" style="font-size:1.2rem"></i>
+        <div>Total keterlambatan bulan ini:<br><strong><?= formatTerlambat($summary['total_terlambat_detik']) ?></strong></div>
+    </div>
+    <?php endif; ?>
+    <?php if ($summary['total_pulang_cepat_detik'] > 0): ?>
+    <div style="flex:1;min-width:220px;background:#faf5ff;border:1px solid #d8b4fe;border-left:4px solid #8b5cf6;border-radius:10px;padding:12px 16px;font-size:13.5px;color:#6d28d9;display:flex;align-items:center;gap:10px">
+        <i class="fas fa-person-running" style="font-size:1.2rem"></i>
+        <div>Total pulang lebih awal bulan ini:<br><strong><?= formatTerlambat($summary['total_pulang_cepat_detik']) ?></strong></div>
+    </div>
+    <?php endif; ?>
 </div>
 <?php endif; ?>
 
 <div class="card">
     <div class="card-header">
         <h3>Detail Absensi — <?= $months[(int)$bulan] . ' ' . $tahun ?></h3>
-        <a href="../api/export_rekap.php?bulan=<?= $bulan ?>&tahun=<?= $tahun ?>" class="btn btn-outline btn-sm">
-            <i class="fas fa-download"></i> Export CSV
-        </a>
     </div>
     <div class="table-wrap">
         <table>
@@ -104,22 +142,26 @@ include __DIR__ . '/../includes/header.php';
                     <th>Tanggal</th>
                     <th>Hari</th>
                     <th>Shift</th>
-                    <th>Jam Masuk</th>
-                    <th>Jam Keluar</th>
+                    <th>Masuk</th>
+                    <th>Keluar</th>
+                    <th>Lokasi</th>
                     <th>Status</th>
-                    <th>Terlambat</th>
+                    <th><i class="fas fa-clock" style="color:#f59e0b"></i> Terlambat</th>
+                    <th><i class="fas fa-person-running" style="color:#8b5cf6"></i> Pulang Cepat</th>
                     <th>Durasi Kerja</th>
-                    <th>Keterangan</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if (empty($absensis)): ?>
-                <tr><td colspan="9" class="text-center text-muted" style="padding:30px">Tidak ada data absensi untuk periode ini</td></tr>
-                <?php else: foreach ($absensis as $a): ?>
+                <tr><td colspan="10" class="text-center text-muted" style="padding:30px">Tidak ada data absensi untuk periode ini</td></tr>
+                <?php else: foreach ($absensis as $a):
+                    $terlambat   = (int)($a['terlambat_detik'] ?? 0);
+                    $pulangCepat = (int)($a['pulang_cepat_detik'] ?? 0);
+                ?>
                 <tr>
                     <td style="font-weight:600"><?= date('d/m/Y', strtotime($a['tanggal'])) ?></td>
-                    <td style="font-size:13px;color:var(--text-muted)"><?= date('l', strtotime($a['tanggal'])) ?></td>
-                    <td style="font-size:13px"><?= htmlspecialchars($a['shift_nama']??'-') ?></td>
+                    <td style="font-size:12.5px;color:var(--text-muted)"><?= date('D', strtotime($a['tanggal'])) ?></td>
+                    <td style="font-size:12.5px"><?= htmlspecialchars($a['shift_nama']??'-') ?></td>
                     <td>
                         <?php if ($a['waktu_masuk']): ?>
                         <span style="font-family:'JetBrains Mono',monospace;font-size:13px"><?= date('H:i:s', strtotime($a['waktu_masuk'])) ?></span>
@@ -131,19 +173,49 @@ include __DIR__ . '/../includes/header.php';
                     <td>
                         <?php if ($a['waktu_keluar']): ?>
                         <span style="font-family:'JetBrains Mono',monospace;font-size:13px"><?= date('H:i:s', strtotime($a['waktu_keluar'])) ?></span>
+                        <?php if ($a['jam_keluar']): ?>
+                        <div style="font-size:11px;color:var(--text-muted)">Jadwal: <?= substr($a['jam_keluar'],0,5) ?></div>
+                        <?php endif; ?>
                         <?php else: ?><span class="text-muted">-</span><?php endif; ?>
                     </td>
+                    <td style="font-size:12px;color:var(--text-muted)"><?= htmlspecialchars($a['lokasi_nama']??'-') ?></td>
                     <td><?= badgeStatus($a['status_kehadiran']) ?></td>
                     <td>
-                        <?php if ($a['terlambat_detik'] > 0): ?>
-                        <span style="color:var(--warning);font-size:13px;font-weight:600"><?= formatTerlambat($a['terlambat_detik']) ?></span>
-                        <?php else: ?><span class="text-muted text-sm">-</span><?php endif; ?>
+                        <?php if ($terlambat > 0): ?>
+                        <span style="background:#fef3c7;color:#92400e;padding:3px 8px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap">
+                            <i class="fas fa-clock"></i> <?= formatTerlambat($terlambat) ?>
+                        </span>
+                        <?php else: ?><span style="color:var(--text-muted);font-size:12px">-</span><?php endif; ?>
+                    </td>
+                    <td>
+                        <?php if ($pulangCepat > 0): ?>
+                        <span style="background:#f3e8ff;color:#6d28d9;padding:3px 8px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap">
+                            <i class="fas fa-person-running"></i> <?= formatTerlambat($pulangCepat) ?>
+                        </span>
+                        <?php else: ?><span style="color:var(--text-muted);font-size:12px">-</span><?php endif; ?>
                     </td>
                     <td style="font-size:13px"><?= formatDurasi($a['durasi_kerja']) ?></td>
-                    <td style="font-size:12.5px;color:var(--text-muted)"><?= htmlspecialchars($a['keterangan']??'') ?></td>
                 </tr>
                 <?php endforeach; endif; ?>
             </tbody>
+            <?php if (!empty($absensis)): ?>
+            <tfoot>
+                <tr style="background:var(--surface2);font-weight:700">
+                    <td colspan="7" style="font-size:13px;padding:10px 12px">TOTAL BULAN INI</td>
+                    <td>
+                        <?php if ($summary['total_terlambat_detik'] > 0): ?>
+                        <span style="color:#d97706;font-size:12.5px"><?= formatTerlambat($summary['total_terlambat_detik']) ?></span>
+                        <?php else: ?><span style="color:var(--text-muted)">-</span><?php endif; ?>
+                    </td>
+                    <td>
+                        <?php if ($summary['total_pulang_cepat_detik'] > 0): ?>
+                        <span style="color:#7c3aed;font-size:12.5px"><?= formatTerlambat($summary['total_pulang_cepat_detik']) ?></span>
+                        <?php else: ?><span style="color:var(--text-muted)">-</span><?php endif; ?>
+                    </td>
+                    <td style="font-size:13px"><?= formatDurasi($summary['total_durasi']) ?></td>
+                </tr>
+            </tfoot>
+            <?php endif; ?>
         </table>
     </div>
 </div>

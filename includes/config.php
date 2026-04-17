@@ -209,7 +209,7 @@ function sendSmtpEmail($db, $perusahaan_id, $to, $subject, $htmlBody) {
     $s = $stmt->fetch();
     if (!$s) return 'Konfigurasi SMTP belum diatur atau tidak aktif.';
 
-    $pw = base64_decode($s['password']);
+$pw = $s['password'];
 
     $paths = [
         __DIR__ . '/../vendor/phpmailer/phpmailer/src/PHPMailer.php',

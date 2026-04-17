@@ -10,9 +10,9 @@ $errors  = [];
 $success = false;
 $db      = getDB();
 
-// Ambil daftar jabatan & departemen (perusahaan_id = 1 default)
-$jabatanList    = $db->query("SELECT id, nama FROM jabatan    WHERE perusahaan_id = 1 ORDER BY nama ASC")->fetchAll();
-$departemenList = $db->query("SELECT id, nama FROM departemen WHERE perusahaan_id = 1 ORDER BY nama ASC")->fetchAll();
+// ✅ FIX: perusahaan_id = 5 (sebelumnya hardcode = 1)
+$jabatanList    = $db->query("SELECT id, nama FROM jabatan    WHERE perusahaan_id = 5 ORDER BY nama ASC")->fetchAll();
+$departemenList = $db->query("SELECT id, nama FROM departemen WHERE perusahaan_id = 5 ORDER BY nama ASC")->fetchAll();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $nama         = sanitize($_POST['nama']         ?? '');
@@ -35,7 +35,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if (empty($errors)) {
-        $perusahaan_id = 1;
+        // ✅ FIX: perusahaan_id = 5 (sebelumnya hardcode = 1)
+        $perusahaan_id = 5;
         try {
             $cols = $db->query("SHOW COLUMNS FROM karyawan")->fetchAll(PDO::FETCH_COLUMN);
 
@@ -98,7 +99,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
             </div>';
 
-            // Kirim jika SMTP aktif
+            // ✅ FIX: perusahaan_id = 5 (sebelumnya hardcode = 1)
             $smtpStmt = $db->prepare("SELECT * FROM smtp_settings WHERE perusahaan_id=? AND is_active=1 LIMIT 1");
             $smtpStmt->execute([$perusahaan_id]);
             if ($smtpStmt->fetch()) {
@@ -199,7 +200,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .form-header h2 { font-size: 1.55rem; font-weight: 800; color: #0f172a; margin-bottom: 4px; }
         .form-header p  { font-size: 13.5px; color: #64748b; }
 
-        /* OTP info banner */
         .otp-info-banner {
             display: flex; align-items: center; gap: 10px;
             background: linear-gradient(135deg, #eff6ff, #f0fdf4);
@@ -211,7 +211,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .otp-info-banner i { color: #0ea5e9; font-size: 15px; flex-shrink: 0; }
         .otp-info-banner strong { color: #0f172a; }
 
-        /* Input */
         .input-group { margin-bottom: 14px; }
         .input-group label {
             display: block; font-size: 12.5px; font-weight: 600;
@@ -244,10 +243,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             color: #94a3b8; font-size: 11px; pointer-events: none;
         }
 
-        /* Grid 2 col */
         .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
-        /* Divider */
         .section-divider {
             display: flex; align-items: center; gap: 10px;
             margin: 6px 0 14px;
@@ -259,7 +256,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             content: ''; flex: 1; height: 1px; background: #e2e8f0;
         }
 
-        /* Alert */
         .alert-error {
             display: flex; align-items: flex-start; gap: 10px;
             padding: 12px 14px; background: #fef2f2;
@@ -273,7 +269,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             0%,100%{transform:translateX(0)} 25%{transform:translateX(-5px)} 75%{transform:translateX(4px)}
         }
 
-        /* Success */
         .success-wrap { text-align: center; padding: 20px 0; }
         .success-icon {
             width: 72px; height: 72px; border-radius: 50%;
@@ -287,7 +282,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .success-wrap h2 { font-size: 1.4rem; font-weight: 800; color: #0f172a; margin-bottom: 8px; }
         .success-wrap p  { font-size: 13.5px; color: #64748b; margin-bottom: 24px; line-height: 1.65; }
 
-        /* Button */
         .btn-submit {
             width: 100%; padding: 12px 20px;
             background: linear-gradient(135deg, #0f4c81, #0a2d55);
@@ -299,11 +293,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         .btn-submit:hover { transform: translateY(-1px); box-shadow: 0 8px 28px rgba(15,76,129,.4); }
 
-        /* Footer */
         .form-footer { margin-top: 18px; text-align: center; font-size: 12px; color: #94a3b8; }
         .form-footer a { color: #0f4c81; font-weight: 600; text-decoration: none; }
 
-        /* Mobile */
         @media(max-width:820px) {
             .left-panel { display: none; }
             body {
@@ -357,7 +349,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <div class="right-panel">
 
 <?php if ($success): ?>
-    <!-- ══ SUCCESS STATE ══ -->
     <div class="success-wrap">
         <div class="success-icon"><i class="fas fa-envelope-circle-check"></i></div>
         <h2>Pendaftaran Berhasil! 🎉</h2>
@@ -391,7 +382,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <p>Isi data diri Anda untuk mendaftar ke DailyFix</p>
     </div>
 
-    <!-- Info OTP -->
     <div class="otp-info-banner">
         <i class="fas fa-circle-info"></i>
         <span>Login menggunakan <strong>kode OTP</strong> yang dikirim ke email — tidak perlu password.</span>
@@ -406,7 +396,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     <form method="POST" autocomplete="off">
 
-        <!-- ── Data Diri ── -->
         <div class="section-divider">Data Diri</div>
 
         <div class="input-group">
@@ -450,7 +439,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
         </div>
 
-        <!-- ── Posisi ── -->
         <div class="section-divider">Posisi & Departemen</div>
 
         <div class="form-grid-2">

@@ -7,7 +7,6 @@ $activePage = 'dashboard';
 $user       = currentUser();
 $db         = getDB();
 
-// Statistik hari ini
 $today = date('Y-m-d');
 
 if ($user['role'] === 'admin' || $user['role'] === 'manager') {
@@ -16,7 +15,6 @@ if ($user['role'] === 'admin' || $user['role'] === 'manager') {
     $terlambat     = $db->query("SELECT COUNT(*) FROM absensi a JOIN karyawan k ON k.id = a.karyawan_id WHERE k.perusahaan_id = {$user['perusahaan_id']} AND a.tanggal = '$today' AND a.status_kehadiran = 'terlambat'")->fetchColumn();
     $absen         = $totalKaryawan - $hadirHariIni;
 
-    // Absensi 7 hari terakhir
     $stmt = $db->prepare("SELECT DATE_FORMAT(a.tanggal,'%d/%m') as tgl, 
         SUM(CASE WHEN a.status_kehadiran IN ('hadir','terlambat') THEN 1 ELSE 0 END) as hadir,
         SUM(CASE WHEN a.status_kehadiran = 'terlambat' THEN 1 ELSE 0 END) as terlambat
@@ -26,16 +24,16 @@ if ($user['role'] === 'admin' || $user['role'] === 'manager') {
     $stmt->execute([$user['perusahaan_id']]);
     $chartData = $stmt->fetchAll();
 
-    // Daftar absensi hari ini
     $stmtAbsen = $db->prepare("SELECT a.*, k.nama, k.nik, k.foto FROM absensi a 
         JOIN karyawan k ON k.id = a.karyawan_id
         WHERE k.perusahaan_id = ? AND a.tanggal = ? ORDER BY a.waktu_masuk DESC LIMIT 10");
     $stmtAbsen->execute([$user['perusahaan_id'], $today]);
     $absensiHariIni = $stmtAbsen->fetchAll();
+
 } else {
-    // Statistik personal
     $bulan = date('Y-m');
-    $totalHadir   = $db->prepare("SELECT COUNT(*) FROM absensi WHERE karyawan_id = ? AND DATE_FORMAT(tanggal,'%Y-%m') = ? AND status_kehadiran IN ('hadir','terlambat')");
+
+    $totalHadir = $db->prepare("SELECT COUNT(*) FROM absensi WHERE karyawan_id = ? AND DATE_FORMAT(tanggal,'%Y-%m') = ? AND status_kehadiran IN ('hadir','terlambat')");
     $totalHadir->execute([$user['id'], $bulan]);
     $totalHadir = $totalHadir->fetchColumn();
 
@@ -43,19 +41,49 @@ if ($user['role'] === 'admin' || $user['role'] === 'manager') {
     $totalTerlambat->execute([$user['id'], $bulan]);
     $totalTerlambat = $totalTerlambat->fetchColumn();
 
-    $absensiSaya = $db->prepare("SELECT a.*, s.nama as shift_nama, s.jam_masuk, s.jam_keluar FROM absensi a LEFT JOIN shift s ON s.id = a.shift_id WHERE a.karyawan_id = ? ORDER BY a.tanggal DESC LIMIT 7");
+    $absensiSaya = $db->prepare("SELECT a.*, s.nama as shift_nama, s.jam_masuk, s.jam_keluar 
+        FROM absensi a 
+        LEFT JOIN shift s ON s.id = a.shift_id 
+        WHERE a.karyawan_id = ? ORDER BY a.tanggal DESC LIMIT 7");
     $absensiSaya->execute([$user['id']]);
     $absensiSaya = $absensiSaya->fetchAll();
 
-    // Absensi hari ini
-    $stmtToday = $db->prepare("SELECT a.*, s.nama as shift_nama, s.jam_masuk, s.jam_keluar, l.nama as lokasi_nama FROM absensi a LEFT JOIN shift s ON s.id = a.shift_id LEFT JOIN jadwal j ON j.id = a.jadwal_id LEFT JOIN lokasi l ON l.id = j.lokasi_id WHERE a.karyawan_id = ? AND a.tanggal = ?");
+    // ── Absensi hari ini: lokasi dari karyawan_lokasi (bukan j.lokasi_id) ──
+    $stmtToday = $db->prepare("
+        SELECT a.*, s.nama as shift_nama, s.jam_masuk, s.jam_keluar,
+               l.nama as lokasi_nama
+        FROM absensi a
+        LEFT JOIN shift s ON s.id = a.shift_id
+        LEFT JOIN lokasi l ON l.id = a.lokasi_id
+        WHERE a.karyawan_id = ? AND a.tanggal = ?
+    ");
     $stmtToday->execute([$user['id'], $today]);
     $absenToday = $stmtToday->fetch();
 
-    // Jadwal aktif
-    $stmtJadwal = $db->prepare("SELECT jk.*, j.nama as jadwal_nama, s.nama as shift_nama, s.jam_masuk, s.jam_keluar, s.toleransi_terlambat_detik, l.nama as lokasi_nama FROM jadwal_karyawan jk JOIN jadwal j ON j.id = jk.jadwal_id JOIN shift s ON s.id = j.shift_id JOIN lokasi l ON l.id = j.lokasi_id WHERE jk.karyawan_id = ? AND jk.berlaku_dari <= CURDATE() AND (jk.berlaku_sampai IS NULL OR jk.berlaku_sampai >= CURDATE()) LIMIT 1");
+    // ── Jadwal aktif: tanpa join lokasi via jadwal ──
+    $stmtJadwal = $db->prepare("
+        SELECT jk.*, j.nama as jadwal_nama,
+               s.nama as shift_nama, s.jam_masuk, s.jam_keluar, s.toleransi_terlambat_detik
+        FROM jadwal_karyawan jk
+        JOIN jadwal j ON j.id = jk.jadwal_id
+        JOIN shift s ON s.id = j.shift_id
+        WHERE jk.karyawan_id = ?
+        AND jk.berlaku_dari <= CURDATE()
+        AND (jk.berlaku_sampai IS NULL OR jk.berlaku_sampai >= CURDATE())
+        LIMIT 1
+    ");
     $stmtJadwal->execute([$user['id']]);
     $jadwalAktif = $stmtJadwal->fetch();
+
+    // ── Ambil lokasi karyawan untuk ditampilkan di widget ──
+    $stmtLokasi = $db->prepare("
+        SELECT l.nama FROM karyawan_lokasi kl
+        JOIN lokasi l ON l.id = kl.lokasi_id
+        WHERE kl.karyawan_id = ? AND l.status = 'aktif'
+        ORDER BY l.nama LIMIT 3
+    ");
+    $stmtLokasi->execute([$user['id']]);
+    $lokasiKaryawan = $stmtLokasi->fetchAll(PDO::FETCH_COLUMN);
 }
 
 include __DIR__ . '/includes/header.php';
@@ -145,19 +173,19 @@ include __DIR__ . '/includes/header.php';
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <script>
 const chartData = <?= json_encode($chartData) ?>;
-const labels = chartData.map(d => d.tgl);
-const hadir  = chartData.map(d => parseInt(d.hadir));
+const labels    = chartData.map(d => d.tgl);
+const hadir     = chartData.map(d => parseInt(d.hadir));
 const terlambat = chartData.map(d => parseInt(d.terlambat));
 new Chart(document.getElementById('chartKehadiran'), {
     type: 'bar',
     data: {
         labels,
         datasets: [
-            { label: 'Hadir', data: hadir, backgroundColor: '#dcfce7', borderColor: '#16a34a', borderWidth: 2, borderRadius: 6 },
-            { label: 'Terlambat', data: terlambat, backgroundColor: '#fef3c7', borderColor: '#d97706', borderWidth: 2, borderRadius: 6 }
+            { label:'Hadir',     data:hadir,     backgroundColor:'#dcfce7', borderColor:'#16a34a', borderWidth:2, borderRadius:6 },
+            { label:'Terlambat', data:terlambat, backgroundColor:'#fef3c7', borderColor:'#d97706', borderWidth:2, borderRadius:6 }
         ]
     },
-    options: { responsive: true, plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
+    options: { responsive:true, plugins:{ legend:{ position:'bottom' } }, scales:{ y:{ beginAtZero:true, ticks:{ stepSize:1 } } } }
 });
 </script>
 
@@ -173,6 +201,12 @@ new Chart(document.getElementById('chartKehadiran'), {
             <?= htmlspecialchars($jadwalAktif['shift_nama']) ?> &nbsp;|&nbsp;
             <?= substr($jadwalAktif['jam_masuk'],0,5) ?> – <?= substr($jadwalAktif['jam_keluar'],0,5) ?>
         </div>
+        <?php if (!empty($lokasiKaryawan)): ?>
+        <div style="margin-top:6px;font-size:12px;opacity:.75">
+            <i class="fas fa-map-marker-alt"></i>
+            <?= implode(', ', array_map('htmlspecialchars', $lokasiKaryawan)) ?>
+        </div>
+        <?php endif; ?>
         <div class="loc-status">
             <div class="loc-dot" id="locDot"></div>
             <span id="locText">Mendeteksi lokasi...</span>
@@ -185,9 +219,7 @@ new Chart(document.getElementById('chartKehadiran'), {
     </div>
 
     <div class="card">
-        <div class="card-header">
-            <h3>Status Absen Hari Ini</h3>
-        </div>
+        <div class="card-header"><h3>Status Absen Hari Ini</h3></div>
         <div class="card-body">
             <?php if ($absenToday && $absenToday['waktu_masuk']): ?>
             <div style="display:grid;gap:12px">
@@ -196,6 +228,9 @@ new Chart(document.getElementById('chartKehadiran'), {
                     <div>
                         <div style="font-size:12px;color:var(--text-muted);font-weight:600">MASUK</div>
                         <div style="font-size:20px;font-family:'JetBrains Mono',monospace;font-weight:700"><?= date('H:i:s', strtotime($absenToday['waktu_masuk'])) ?></div>
+                        <?php if (!empty($absenToday['lokasi_nama'])): ?>
+                        <div style="font-size:11.5px;color:var(--text-muted)"><i class="fas fa-map-marker-alt"></i> <?= htmlspecialchars($absenToday['lokasi_nama']) ?></div>
+                        <?php endif; ?>
                     </div>
                     <div style="margin-left:auto"><?= badgeStatus($absenToday['status_kehadiran']) ?></div>
                 </div>
@@ -225,7 +260,6 @@ new Chart(document.getElementById('chartKehadiran'), {
     </div>
 </div>
 
-<!-- Stats bulan ini -->
 <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
     <div class="stat-card">
         <div class="stat-icon green"><i class="fas fa-calendar-check"></i></div>
@@ -282,18 +316,20 @@ new Chart(document.getElementById('chartKehadiran'), {
 <script>
 setInterval(() => {
     const now = new Date();
-    const h = String(now.getHours()).padStart(2,'0');
-    const m = String(now.getMinutes()).padStart(2,'0');
-    const s = String(now.getSeconds()).padStart(2,'0');
-    document.getElementById('liveTime').textContent = h+':'+m+':'+s;
+    document.getElementById('liveTime').textContent =
+        String(now.getHours()).padStart(2,'0') + ':' +
+        String(now.getMinutes()).padStart(2,'0') + ':' +
+        String(now.getSeconds()).padStart(2,'0');
 }, 1000);
 
 if (navigator.geolocation) {
     navigator.geolocation.getCurrentPosition(pos => {
-        document.getElementById('locDot').classList.add('ok');
-        document.getElementById('locText').textContent = 'Lokasi terdeteksi ✓';
+        document.getElementById('locDot')?.classList.add('ok');
+        const el = document.getElementById('locText');
+        if (el) el.textContent = 'Lokasi terdeteksi ✓';
     }, () => {
-        document.getElementById('locText').textContent = 'Akses lokasi ditolak';
+        const el = document.getElementById('locText');
+        if (el) el.textContent = 'Akses lokasi ditolak';
     });
 }
 </script>
