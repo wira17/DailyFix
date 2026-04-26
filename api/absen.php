@@ -14,20 +14,20 @@ set_exception_handler(function($e) {
 header('Content-Type: application/json');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    jsonResponse(['success' => false, 'message' => 'Method not allowed'], 405);
+    echo json_encode(['success' => false, 'message' => 'Method not allowed']); exit;
 }
 
 $input    = json_decode(file_get_contents('php://input'), true);
-$type     = $input['type']     ?? '';
+$type     = $input['type']       ?? '';
 $lat      = (float)($input['lat']      ?? 0);
 $lng      = (float)($input['lng']      ?? 0);
-$foto     = $input['foto']     ?? '';
+$foto     = $input['foto']       ?? '';
 $accuracy = (float)($input['accuracy'] ?? 9999);
 $gpsAge   = (float)($input['gps_age']  ?? 0);
-$speed    = $input['speed']    ?? null;
+$speed    = $input['speed']      ?? null;
 
 if (!in_array($type, ['masuk', 'keluar']) || !$lat || !$lng) {
-    jsonResponse(['success' => false, 'message' => 'Data tidak lengkap']);
+    echo json_encode(['success' => false, 'message' => 'Data tidak lengkap']); exit;
 }
 
 $db    = getDB();
@@ -35,27 +35,49 @@ $user  = currentUser();
 $today = date('Y-m-d');
 $now   = date('Y-m-d H:i:s');
 
-// ── LAYER 1-7 ────────────────────────────────────────────────────
-if ($accuracy > 100) jsonResponse(['success'=>false,'message'=>"Akurasi GPS terlalu rendah ({$accuracy}m).",'flag'=>'low_accuracy']);
-if ($gpsAge > 300)   jsonResponse(['success'=>false,'message'=>'Data GPS terlalu lama. Refresh halaman.','flag'=>'gps_stale']);
-if ($speed !== null && $speed > 50) jsonResponse(['success'=>false,'message'=>'Terdeteksi pergerakan tidak wajar.','flag'=>'speed_anomaly']);
+// ── LAYER VALIDASI ────────────────────────────────────────────────
+if ($accuracy > 100) {
+    echo json_encode(['success'=>false,'message'=>"Akurasi GPS terlalu rendah ({$accuracy}m). Pindah ke area terbuka.",'flag'=>'low_accuracy']); exit;
+}
+if ($gpsAge > 300) {
+    echo json_encode(['success'=>false,'message'=>'Data GPS terlalu lama. Refresh halaman dan coba lagi.','flag'=>'gps_stale']); exit;
+}
+if ($speed !== null && $speed > 50) {
+    echo json_encode(['success'=>false,'message'=>'Terdeteksi pergerakan tidak wajar (kecepatan tinggi).','flag'=>'speed_anomaly']); exit;
+}
 
 $latDec = strlen(explode('.', (string)$lat)[1] ?? '');
 $lngDec = strlen(explode('.', (string)$lng)[1] ?? '');
-if ($latDec < 4 || $lngDec < 4) jsonResponse(['success'=>false,'message'=>'Koordinat GPS tidak valid.','flag'=>'suspicious_coords']);
+if ($latDec < 4 || $lngDec < 4) {
+    echo json_encode(['success'=>false,'message'=>'Koordinat GPS tidak valid (presisi rendah).','flag'=>'suspicious_coords']); exit;
+}
 
+// Rate limit: max 5 percobaan per 10 menit
 $stmtRate = $db->prepare("SELECT COUNT(*) as cnt FROM log_aktivitas WHERE karyawan_id=? AND aksi LIKE 'ABSEN%' AND created_at >= ?");
 $stmtRate->execute([$user['id'], date('Y-m-d H:i:s', strtotime('-10 minutes'))]);
-if ($stmtRate->fetch()['cnt'] >= 5) jsonResponse(['success'=>false,'message'=>'Terlalu banyak percobaan.','flag'=>'rate_limit']);
+if ($stmtRate->fetch()['cnt'] >= 5) {
+    echo json_encode(['success'=>false,'message'=>'Terlalu banyak percobaan. Tunggu beberapa menit.','flag'=>'rate_limit']); exit;
+}
 
+// Cek IP sharing
 $ipAddr    = $_SERVER['REMOTE_ADDR'] ?? '';
 $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
 $stmtIP    = $db->prepare("SELECT COUNT(DISTINCT karyawan_id) as cnt FROM absensi WHERE tanggal=? AND ip_address=? AND karyawan_id != ?");
 $stmtIP->execute([$today, $ipAddr, $user['id']]);
-$suspiciousIP = $stmtIP->fetch()['cnt'] >= 3;
+$suspiciousIP = ($stmtIP->fetch()['cnt'] ?? 0) >= 3;
 
-if (!$foto || strpos($foto, 'data:image/') !== 0) jsonResponse(['success'=>false,'message'=>'Foto wajah tidak ditemukan.']);
-$fotoPath = $foto;
+// Validasi foto
+if (!$foto || strpos($foto, 'data:image/') !== 0) {
+    echo json_encode(['success'=>false,'message'=>'Foto wajah tidak ditemukan atau tidak valid.']); exit;
+}
+
+// Simpan foto ke disk
+$uploadDir = __DIR__ . '/../uploads/absen/' . date('Y/m/') . $user['id'] . '/';
+if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
+$fotoFile    = $type . '_' . date('Ymd_His') . '.jpg';
+$fotoPath    = 'uploads/absen/' . date('Y/m/') . $user['id'] . '/' . $fotoFile;
+$fotoDataRaw = base64_decode(preg_replace('#^data:image/\w+;base64,#i', '', $foto));
+file_put_contents($uploadDir . $fotoFile, $fotoDataRaw);
 
 // ── Jadwal aktif ─────────────────────────────────────────────────
 $stmtJadwal = $db->prepare("
@@ -74,7 +96,10 @@ $stmtJadwal = $db->prepare("
 ");
 $stmtJadwal->execute([$user['id']]);
 $semuaJadwal = $stmtJadwal->fetchAll();
-if (empty($semuaJadwal)) jsonResponse(['success'=>false,'message'=>'Tidak ada jadwal aktif. Hubungi admin.']);
+
+if (empty($semuaJadwal)) {
+    echo json_encode(['success'=>false,'message'=>'Tidak ada jadwal aktif. Hubungi admin.']); exit;
+}
 
 $hariIni = (int)date('N');
 $jadwal  = null;
@@ -83,7 +108,7 @@ foreach ($semuaJadwal as $j) {
 }
 if (!$jadwal) {
     $namaHari = ['','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu','Minggu'][$hariIni];
-    jsonResponse(['success'=>false,'message'=>"Tidak ada jadwal untuk hari {$namaHari}."]);
+    echo json_encode(['success'=>false,'message'=>"Tidak ada jadwal untuk hari {$namaHari}."]); exit;
 }
 
 // ── Validasi lokasi ───────────────────────────────────────────────
@@ -95,7 +120,10 @@ $stmtLokasi = $db->prepare("
 ");
 $stmtLokasi->execute([$user['id']]);
 $lokasiList = $stmtLokasi->fetchAll();
-if (empty($lokasiList)) jsonResponse(['success'=>false,'message'=>'Belum ada lokasi absen terdaftar. Hubungi admin.']);
+
+if (empty($lokasiList)) {
+    echo json_encode(['success'=>false,'message'=>'Belum ada lokasi absen terdaftar. Hubungi admin.']); exit;
+}
 
 $lokasiMatch   = null;
 $jarakTerdekat = PHP_INT_MAX;
@@ -109,9 +137,10 @@ foreach ($lokasiList as $l) {
     }
 }
 if (!$lokasiMatch) {
-    logActivity('ABSEN_GAGAL', "Diluar radius: {$jarakTerdekat}m ({$namaTerdekat}), acc:{$accuracy}m");
-    jsonResponse(['success'=>false,'message'=>"❌ Anda berada {$jarakTerdekat}m dari lokasi terdekat ({$namaTerdekat}).","flag"=>'out_of_radius']);
+    logActivity('ABSEN_GAGAL', "Di luar radius: {$jarakTerdekat}m ({$namaTerdekat}), acc:{$accuracy}m");
+    echo json_encode(['success'=>false,'message'=>"❌ Anda berada {$jarakTerdekat}m dari lokasi terdekat ({$namaTerdekat}). Pastikan Anda berada di area kerja.",'flag'=>'out_of_radius']); exit;
 }
+
 $jarak    = $lokasiMatch['jarak'];
 $lokasiId = $lokasiMatch['id'];
 
@@ -137,16 +166,17 @@ $stmtCek = $db->prepare("SELECT * FROM absensi WHERE karyawan_id=? AND tanggal=?
 $stmtCek->execute([$user['id'], $today]);
 $absenToday = $stmtCek->fetch();
 
-// ── Helpers ───────────────────────────────────────────────────────
+// ── Helper: hitung terlambat ──
 function hitungTerlambat($jamShift, $toleransiDetik, $waktuAbsen) {
-    $tgl      = date('Y-m-d', strtotime($waktuAbsen));
-    $tsShift  = strtotime($tgl . ' ' . $jamShift);
-    $tsAbsen  = strtotime($waktuAbsen);
-    $batas    = $tsShift + (int)$toleransiDetik;
+    $tgl     = date('Y-m-d', strtotime($waktuAbsen));
+    $tsShift = strtotime($tgl . ' ' . $jamShift);
+    $tsAbsen = strtotime($waktuAbsen);
+    $batas   = $tsShift + (int)$toleransiDetik;
     if ($tsAbsen <= $batas) return 0;
     return $tsAbsen - $tsShift;
 }
 
+// ── Helper: hitung pulang cepat ──
 function hitungPulangCepat($jamKeluar, $toleransiDetik, $waktuKeluar) {
     $tgl      = date('Y-m-d', strtotime($waktuKeluar));
     $tsShift  = strtotime($tgl . ' ' . $jamKeluar);
@@ -161,9 +191,7 @@ function fmtDetik($detik) {
     if ($detik <= 0) return '-';
     $j = floor($detik/3600); $m = floor(($detik%3600)/60); $s = $detik%60;
     $p = [];
-    if ($j) $p[] = $j.' jam';
-    if ($m) $p[] = $m.' menit';
-    if ($s) $p[] = $s.' detik';
+    if ($j) $p[] = $j.' jam'; if ($m) $p[] = $m.' menit'; if ($s) $p[] = $s.' detik';
     return implode(' ', $p);
 }
 
@@ -171,18 +199,28 @@ function fmtDetik($detik) {
 // ABSEN MASUK
 // ════════════════════════════════════════════════════════════════
 if ($type === 'masuk') {
-    if ($absenToday && $absenToday['waktu_masuk']) jsonResponse(['success'=>false,'message'=>'Anda sudah absen masuk hari ini.']);
+
+    if ($absenToday && $absenToday['waktu_masuk']) {
+        echo json_encode(['success'=>false,'message'=>'Anda sudah absen masuk hari ini.']); exit;
+    }
 
     $terlambatDetik  = hitungTerlambat($jadwal['jam_masuk'], $jadwal['toleransi_terlambat_detik'], $now);
     $statusKehadiran = $terlambatDetik > 0 ? 'terlambat' : 'hadir';
     $keterangan      = "lokasi:{$lokasiMatch['nama']}, acc:{$accuracy}m" . ($fraudFlag ? " [FLAG:{$fraudFlag}]" : '');
 
     if ($absenToday) {
-        $db->prepare("UPDATE absensi SET waktu_masuk=?,lat_masuk=?,lng_masuk=?,jarak_masuk=?,lokasi_id=?,status_kehadiran=?,terlambat_detik=?,foto_masuk=?,device_info=?,ip_address=?,keterangan=? WHERE id=?")
-           ->execute([$now,$lat,$lng,$jarak,$lokasiId,$statusKehadiran,$terlambatDetik,$fotoPath,$userAgent,$ipAddr,$keterangan,$absenToday['id']]);
+        $db->prepare("
+            UPDATE absensi SET waktu_masuk=?, lat_masuk=?, lng_masuk=?, jarak_masuk=?, lokasi_id=?,
+            status_kehadiran=?, terlambat_detik=?, foto_masuk=?, device_info=?, ip_address=?, keterangan=?
+            WHERE id=?
+        ")->execute([$now,$lat,$lng,$jarak,$lokasiId,$statusKehadiran,$terlambatDetik,$fotoPath,$userAgent,$ipAddr,$keterangan,$absenToday['id']]);
     } else {
-        $db->prepare("INSERT INTO absensi (karyawan_id,jadwal_id,shift_id,tanggal,waktu_masuk,lat_masuk,lng_masuk,jarak_masuk,lokasi_id,status_kehadiran,terlambat_detik,pulang_cepat_detik,foto_masuk,device_info,ip_address,keterangan) VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?)")
-           ->execute([$user['id'],$jadwal['jadwal_real_id'],$jadwal['shift_id'],$today,$now,$lat,$lng,$jarak,$lokasiId,$statusKehadiran,$terlambatDetik,$fotoPath,$userAgent,$ipAddr,$keterangan]);
+        $db->prepare("
+            INSERT INTO absensi
+            (karyawan_id,jadwal_id,shift_id,tanggal,waktu_masuk,lat_masuk,lng_masuk,jarak_masuk,lokasi_id,
+             status_kehadiran,terlambat_detik,pulang_cepat_detik,foto_masuk,device_info,ip_address,keterangan)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?)
+        ")->execute([$user['id'],$jadwal['jadwal_real_id'],$jadwal['shift_id'],$today,$now,$lat,$lng,$jarak,$lokasiId,$statusKehadiran,$terlambatDetik,$fotoPath,$userAgent,$ipAddr,$keterangan]);
     }
 
     $jamAbsen = date('H:i', strtotime($now));
@@ -190,23 +228,43 @@ if ($type === 'masuk') {
     $tolStr   = fmtDetik($jadwal['toleransi_terlambat_detik']);
 
     if ($terlambatDetik > 0) {
-        $dur = fmtDetik($terlambatDetik);
-        $notif = ['type'=>'terlambat','icon'=>'⏰','title'=>"Terlambat {$dur}",
-            'detail'=>"Jadwal masuk: {$jamShift}" . ($jadwal['toleransi_terlambat_detik']>0?" (toleransi: {$tolStr})":'') . " · Anda masuk: {$jamAbsen} · Terlambat: {$dur}",
-            'color'=>'#f59e0b','bg'=>'#fffbeb'];
-        $msg = "⏰ Absen masuk pukul {$jamAbsen} — terlambat {$dur}";
+        $dur  = fmtDetik($terlambatDetik);
+        $notif = [
+            'type'   => 'terlambat',
+            'icon'   => '⏰',
+            'title'  => "Terlambat {$dur}",
+            'detail' => "Jadwal: {$jamShift}" . ($jadwal['toleransi_terlambat_detik']>0?" (toleransi {$tolStr})":'') . " · Masuk: {$jamAbsen} · Terlambat: {$dur}",
+            'color'  => '#f59e0b',
+            'bg'     => '#fffbeb',
+        ];
+        $msg = "⏰ Absen masuk {$jamAbsen} — terlambat {$dur}";
     } else {
-        $notif = ['type'=>'sukses','icon'=>'✅','title'=>'Absen Masuk Berhasil',
-            'detail'=>"Tepat waktu! Jadwal masuk: {$jamShift}" . ($jadwal['toleransi_terlambat_detik']>0?" (toleransi: {$tolStr})":'') . " · Anda masuk: {$jamAbsen}",
-            'color'=>'#10b981','bg'=>'#ecfdf5'];
+        $notif = [
+            'type'   => 'sukses',
+            'icon'   => '✅',
+            'title'  => 'Absen Masuk Berhasil!',
+            'detail' => "Tepat waktu! Jadwal: {$jamShift}" . ($jadwal['toleransi_terlambat_detik']>0?" (toleransi {$tolStr})":'') . " · Masuk: {$jamAbsen}",
+            'color'  => '#10b981',
+            'bg'     => '#ecfdf5',
+        ];
         $msg = "✅ Absen masuk berhasil pukul {$jamAbsen}";
     }
 
     logActivity('ABSEN_MASUK', "Masuk {$now}, lokasi:{$lokasiMatch['nama']}, jarak:{$jarak}m, terlambat:{$terlambatDetik}s, acc:{$accuracy}m" . ($fraudFlag?", FLAG:{$fraudFlag}":''));
 
-    $resp = ['success'=>true,'message'=>$msg,'notif'=>$notif,'terlambat'=>$terlambatDetik,'status'=>$statusKehadiran,'lokasi'=>$lokasiMatch['nama'],'jam_absen'=>$jamAbsen,'jam_shift'=>$jamShift];
+    $resp = [
+        'success'   => true,
+        'message'   => $msg,
+        'notif'     => $notif,
+        'terlambat' => $terlambatDetik,
+        'status'    => $statusKehadiran,
+        'lokasi'    => $lokasiMatch['nama'],
+        'jam_absen' => $jamAbsen,
+        'jam_shift' => $jamShift,
+    ];
     if ($fraudFlag) $resp['warning'] = 'Absensi tercatat namun terdeteksi anomali lokasi.';
-    jsonResponse($resp);
+
+    echo json_encode($resp); exit;
 
 // ════════════════════════════════════════════════════════════════
 // ABSEN KELUAR
@@ -214,18 +272,23 @@ if ($type === 'masuk') {
 } else {
 
     $lupaAbsenMasuk = false;
+
     if (!$absenToday) {
-        $db->prepare("INSERT INTO absensi (karyawan_id,jadwal_id,shift_id,tanggal,lokasi_id,status_kehadiran,terlambat_detik,pulang_cepat_detik,device_info,ip_address,keterangan) VALUES (?,?,?,?,?,?,0,0,?,?,?)")
-           ->execute([$user['id'],$jadwal['jadwal_real_id'],$jadwal['shift_id'],$today,$lokasiId,'absen',$userAgent,$ipAddr,'LUPA_ABSEN_MASUK']);
+        $db->prepare("
+            INSERT INTO absensi (karyawan_id,jadwal_id,shift_id,tanggal,lokasi_id,status_kehadiran,terlambat_detik,pulang_cepat_detik,device_info,ip_address,keterangan)
+            VALUES (?,?,?,?,?,'absen',0,0,?,?,'LUPA_ABSEN_MASUK')
+        ")->execute([$user['id'],$jadwal['jadwal_real_id'],$jadwal['shift_id'],$today,$lokasiId,$userAgent,$ipAddr]);
         $newId      = (int)$db->lastInsertId();
         $absenToday = ['id'=>$newId,'waktu_masuk'=>null,'waktu_keluar'=>null,'status_kehadiran'=>'absen'];
         $lupaAbsenMasuk = true;
     } elseif (!$absenToday['waktu_masuk']) {
-        $db->prepare("UPDATE absensi SET status_kehadiran='absen', keterangan=CONCAT(IFNULL(keterangan,''),' LUPA_ABSEN_MASUK') WHERE id=?")->execute([$absenToday['id']]);
+        $db->prepare("UPDATE absensi SET status_kehadiran='absen', keterangan=CONCAT(IFNULL(keterangan,''),' | LUPA_ABSEN_MASUK') WHERE id=?")->execute([$absenToday['id']]);
         $lupaAbsenMasuk = true;
     }
 
-    if (!empty($absenToday['waktu_keluar'])) jsonResponse(['success'=>false,'message'=>'Anda sudah absen keluar hari ini.']);
+    if (!empty($absenToday['waktu_keluar'])) {
+        echo json_encode(['success'=>false,'message'=>'Anda sudah absen keluar hari ini.']); exit;
+    }
 
     $durasi = 0;
     if (!empty($absenToday['waktu_masuk']))
@@ -235,35 +298,60 @@ if ($type === 'masuk') {
     $pulangCepatDetik = hitungPulangCepat($jadwal['jam_keluar'], $tolPulang, $now);
     $jamKeluar        = date('H:i', strtotime($now));
     $jamKeluarShift   = substr($jadwal['jam_keluar'], 0, 5);
-    $tolPulangStr     = fmtDetik($tolPulang);
 
     $keterangan = "lokasi:{$lokasiMatch['nama']}, acc:{$accuracy}m" . ($fraudFlag?" [FLAG:{$fraudFlag}]":'');
     if ($lupaAbsenMasuk)       $keterangan .= ' | LUPA_ABSEN_MASUK';
     if ($pulangCepatDetik > 0) $keterangan .= " | PULANG_CEPAT:{$pulangCepatDetik}s";
 
-    // Simpan pulang_cepat_detik ke DB
-    $db->prepare("UPDATE absensi SET waktu_keluar=?,lat_keluar=?,lng_keluar=?,jarak_keluar=?,durasi_kerja=?,pulang_cepat_detik=?,foto_keluar=?,keterangan=CONCAT(IFNULL(keterangan,''),' | keluar: ',?) WHERE id=?")
-       ->execute([$now,$lat,$lng,$jarak,$durasi,$pulangCepatDetik,$fotoPath,$keterangan,$absenToday['id']]);
+    $db->prepare("
+        UPDATE absensi
+        SET waktu_keluar=?, lat_keluar=?, lng_keluar=?, jarak_keluar=?,
+            durasi_kerja=?, pulang_cepat_detik=?, foto_keluar=?,
+            keterangan=CONCAT(IFNULL(keterangan,''),' | keluar: ',?)
+        WHERE id=?
+    ")->execute([$now,$lat,$lng,$jarak,$durasi,$pulangCepatDetik,$fotoPath,$keterangan,$absenToday['id']]);
+
+    $durasiStr = formatDurasi($durasi);
 
     if ($pulangCepatDetik > 0) {
         $durPulang = fmtDetik($pulangCepatDetik);
-        $notif = ['type'=>'pulang_cepat','icon'=>'🏃','title'=>"Pulang Lebih Awal {$durPulang}",
-            'detail'=>"Jadwal keluar: {$jamKeluarShift}" . ($tolPulang>0?" (toleransi: {$tolPulangStr})":'') . " · Anda keluar: {$jamKeluar} · Lebih awal: {$durPulang}" . ($durasi>0?" · Durasi kerja: ".formatDurasi($durasi):''),
-            'color'=>'#8b5cf6','bg'=>'#faf5ff'];
-        $msg = "🏃 Absen keluar pukul {$jamKeluar} — pulang lebih awal {$durPulang}";
+        $notif = [
+            'type'  => 'pulang_cepat',
+            'icon'  => '🏃',
+            'title' => "Pulang Lebih Awal {$durPulang}",
+            'color' => '#8b5cf6',
+            'bg'    => '#faf5ff',
+        ];
+        $msg = "🏃 Keluar {$jamKeluar} — pulang lebih awal {$durPulang}";
     } else {
-        $notif = ['type'=>'sukses','icon'=>'✅','title'=>'Absen Keluar Berhasil',
-            'detail'=>"Jadwal keluar: {$jamKeluarShift}" . ($tolPulang>0?" (toleransi: {$tolPulangStr})":'') . " · Keluar: {$jamKeluar}" . ($durasi>0?" · Durasi kerja: ".formatDurasi($durasi):''),
-            'color'=>'#10b981','bg'=>'#ecfdf5'];
-        $msg = "✅ Absen keluar berhasil pukul {$jamKeluar}" . ($durasi>0?" — Durasi: ".formatDurasi($durasi):'');
+        $notif = [
+            'type'  => 'sukses',
+            'icon'  => '✅',
+            'title' => 'Absen Keluar Berhasil!',
+            'color' => '#10b981',
+            'bg'    => '#ecfdf5',
+        ];
+        $msg = "✅ Absen keluar berhasil pukul {$jamKeluar}" . ($durasi>0?" — Durasi: {$durasiStr}":'');
     }
 
     logActivity('ABSEN_KELUAR', "Keluar {$now}, lokasi:{$lokasiMatch['nama']}, durasi:{$durasi}m, pulang_cepat:{$pulangCepatDetik}s, acc:{$accuracy}m" . ($fraudFlag?", FLAG:{$fraudFlag}":''));
 
-    $resp = ['success'=>true,'message'=>$msg,'notif'=>$notif,'durasi'=>$durasi,'pulang_cepat'=>$pulangCepatDetik,'lupa_absen_masuk'=>$lupaAbsenMasuk,'lokasi'=>$lokasiMatch['nama'],'jam_absen'=>$jamKeluar,'jam_shift'=>$jamKeluarShift];
     $warnings = [];
     if ($lupaAbsenMasuk) $warnings[] = '⚠️ Absen masuk tidak tercatat — status ditandai Absen.';
     if ($fraudFlag)      $warnings[] = 'Terdeteksi anomali lokasi.';
+
+    $resp = [
+        'success'          => true,
+        'message'          => $msg,
+        'notif'            => $notif,
+        'durasi'           => $durasi,
+        'pulang_cepat'     => $pulangCepatDetik,
+        'lupa_absen_masuk' => $lupaAbsenMasuk,
+        'lokasi'           => $lokasiMatch['nama'],
+        'jam_absen'        => $jamKeluar,
+        'jam_shift'        => $jamKeluarShift,
+    ];
     if (!empty($warnings)) $resp['warning'] = implode(' ', $warnings);
-    jsonResponse($resp);
+
+    echo json_encode($resp); exit;
 }

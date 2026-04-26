@@ -24,6 +24,18 @@ try {
     $perusahaan_id = 1;
 }
 
+// ─── Ambil info perusahaan ───────────────────────────────────────────────────
+$perusahaanInfo = null;
+try {
+    $stmtPerusahaan = $dbTemp->prepare("SELECT nama, alamat, telepon, email, logo, website FROM perusahaan WHERE id = ? LIMIT 1");
+    $stmtPerusahaan->execute([$perusahaan_id]);
+    $perusahaanInfo = $stmtPerusahaan->fetch();
+} catch (Exception $e) { $perusahaanInfo = null; }
+
+$namaPerusahaan = $perusahaanInfo['nama']    ?? 'DailyFix';
+$logoPerusahaan = $perusahaanInfo['logo']    ?? '';
+$alamatPerusahaan = $perusahaanInfo['alamat'] ?? '';
+
 $jabatanList = [];
 try {
     $stmt = $dbTemp->prepare("SELECT id, nama FROM jabatan WHERE perusahaan_id = ? ORDER BY nama ASC");
@@ -95,7 +107,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
             $placeholders = implode(',', array_fill(0, count($fields), '?'));
             $db->prepare("INSERT INTO karyawan (" . implode(',', $fields) . ") VALUES ($placeholders)")->execute($values);
 
-            // Kirim email notifikasi (gagal email tidak cancel registrasi)
             try {
                 $jabatanNama = $departemenNama = '';
                 foreach ($jabatanList    as $j) { if ($j['id'] == $jabatan_id)    $jabatanNama    = $j['nama']; }
@@ -105,11 +116,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
                 <div style="font-family:\'Plus Jakarta Sans\',Arial,sans-serif;max-width:520px;margin:0 auto">
                     <div style="background:linear-gradient(135deg,#0f4c81,#0a2d55);padding:28px;border-radius:12px 12px 0 0;text-align:center">
                         <div style="display:inline-block;background:linear-gradient(135deg,#00c9a7,#0ea5e9);width:52px;height:52px;border-radius:12px;line-height:52px;font-size:24px;font-weight:900;color:#fff;text-align:center">D</div>
-                        <h1 style="color:#fff;font-size:20px;margin:10px 0 0;font-weight:800">DailyFix</h1>
+                        <h1 style="color:#fff;font-size:20px;margin:10px 0 0;font-weight:800">' . htmlspecialchars($namaPerusahaan) . '</h1>
                     </div>
                     <div style="background:#fff;padding:32px;border:1px solid #e2e8f0;border-top:none">
                         <h2 style="color:#0f172a;font-size:18px;margin:0 0 6px">Pendaftaran Berhasil! 🎉</h2>
-                        <p style="color:#64748b;font-size:14px;margin:0 0 24px">Halo <strong style="color:#0f172a">' . htmlspecialchars($nama) . '</strong>, akun Anda telah terdaftar di DailyFix.</p>
+                        <p style="color:#64748b;font-size:14px;margin:0 0 24px">Halo <strong style="color:#0f172a">' . htmlspecialchars($nama) . '</strong>, akun Anda telah terdaftar di ' . htmlspecialchars($namaPerusahaan) . '.</p>
                         <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:18px 20px;margin-bottom:20px">
                             <table style="width:100%;border-collapse:collapse;font-size:13.5px">
                                 <tr><td style="padding:5px 0;color:#64748b;width:130px">NIK</td><td style="padding:5px 0;font-weight:600;color:#0f172a">' . htmlspecialchars($nik) . '</td></tr>
@@ -126,18 +137,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
                         <p style="color:#64748b;font-size:13px;line-height:1.7;margin:0">Setelah diaktifkan, login menggunakan <strong>kode OTP</strong> yang dikirim ke email ini.</p>
                     </div>
                     <div style="background:#f8fafc;padding:14px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;text-align:center;font-size:11.5px;color:#94a3b8">
-                        © ' . date('Y') . ' DailyFix — Sistem Absensi Digital
+                        © ' . date('Y') . ' ' . htmlspecialchars($namaPerusahaan) . ' — Powered by DailyFix
                     </div>
                 </div>';
 
                 $smtpStmt = $db->prepare("SELECT id FROM smtp_settings WHERE perusahaan_id = ? AND is_active = 1 LIMIT 1");
                 $smtpStmt->execute([$perusahaan_id]);
                 if ($smtpStmt->fetch()) {
-                    sendSmtpEmail($db, $perusahaan_id, $email_reg, 'Pendaftaran DailyFix Berhasil — Menunggu Aktivasi', $emailBody);
+                    sendSmtpEmail($db, $perusahaan_id, $email_reg, 'Pendaftaran ' . $namaPerusahaan . ' Berhasil — Menunggu Aktivasi', $emailBody);
                 }
             } catch (Exception $e) { /* email gagal tidak membatalkan registrasi */ }
 
-            // ✅ PRG: simpan sukses ke session → redirect GET
             $_SESSION['reg_success'] = true;
             $_SESSION['reg_email']   = $email_reg;
             header('Location: ' . APP_URL . '/login.php?registered=1');
@@ -148,7 +158,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
         }
     }
 
-    // ✅ PRG: ada error → simpan ke session → redirect GET
     if (!empty($errors)) {
         $_SESSION['reg_errors'] = $errors;
         $_SESSION['reg_old']    = $_POST;
@@ -206,11 +215,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'send_
                 <div style="font-family:\'Plus Jakarta Sans\',Arial,sans-serif;max-width:480px;margin:0 auto">
                     <div style="background:linear-gradient(135deg,#0f4c81,#0a2d55);padding:24px 28px;border-radius:12px 12px 0 0;text-align:center">
                         <div style="display:inline-block;background:linear-gradient(135deg,#00c9a7,#0ea5e9);width:48px;height:48px;border-radius:12px;line-height:48px;font-size:22px;font-weight:900;color:#fff;text-align:center">D</div>
-                        <h1 style="color:#fff;font-size:20px;margin:10px 0 0;font-weight:800">DailyFix</h1>
+                        <h1 style="color:#fff;font-size:20px;margin:10px 0 0;font-weight:800">' . htmlspecialchars($namaPerusahaan) . '</h1>
                     </div>
                     <div style="background:#fff;padding:28px;border:1px solid #e2e8f0;border-top:none">
                         <p style="color:#374151;font-size:15px;margin-bottom:6px">Halo, <strong>' . htmlspecialchars($user['nama']) . '</strong> 👋</p>
-                        <p style="color:#64748b;font-size:13.5px;margin-bottom:24px">Gunakan kode OTP berikut untuk masuk ke DailyFix. Kode berlaku selama <strong>5 menit</strong>.</p>
+                        <p style="color:#64748b;font-size:13.5px;margin-bottom:24px">Gunakan kode OTP berikut untuk masuk ke sistem absensi <strong>' . htmlspecialchars($namaPerusahaan) . '</strong>. Kode berlaku selama <strong>5 menit</strong>.</p>
                         <div style="background:#f0f4f8;border:2px dashed #0f4c81;border-radius:12px;padding:20px;text-align:center;margin-bottom:20px">
                             <div style="font-family:\'JetBrains Mono\',monospace;font-size:36px;font-weight:900;letter-spacing:8px;color:#0f4c81">' . implode(' ', str_split($otp)) . '</div>
                             <div style="color:#94a3b8;font-size:12px;margin-top:8px">Berlaku hingga ' . date('H:i', strtotime($expires)) . ' WIB</div>
@@ -220,13 +229,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'send_
                         </div>
                     </div>
                     <div style="background:#f8fafc;padding:14px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 12px 12px;text-align:center;font-size:11.5px;color:#94a3b8">
-                        © ' . date('Y') . ' DailyFix — Sistem Absensi Digital · M. Wira Satria Buana · 082177846209
+                        © ' . date('Y') . ' ' . htmlspecialchars($namaPerusahaan) . ' — Powered by DailyFix
                     </div>
                 </div>';
 
                 $sent = false;
                 if ($smtpOk) {
-                    $result = sendSmtpEmail($db, $user['perusahaan_id'], $email, 'Kode OTP Login DailyFix — ' . $otp, $emailBody);
+                    $result = sendSmtpEmail($db, $user['perusahaan_id'], $email, 'Kode OTP Login ' . $namaPerusahaan . ' — ' . $otp, $emailBody);
                     $sent   = ($result === true);
                 }
                 if (!$sent) $_SESSION['dev_otp'] = $otp;
@@ -302,7 +311,7 @@ $devOtp   = $_SESSION['dev_otp']   ?? null;
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Login — DailyFix</title>
+<title>Login — <?= htmlspecialchars($namaPerusahaan) ?></title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 <style>
@@ -315,7 +324,8 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 .left-panel::after  { content:''; position:absolute; bottom:-80px; left:-80px; width:320px; height:320px; border-radius:50%; background:radial-gradient(circle,rgba(255,255,255,.06) 0%,transparent 70%); }
 .dots-grid { position:absolute; inset:0; background-image:radial-gradient(rgba(255,255,255,.07) 1px,transparent 1px); background-size:32px 32px; }
 .brand-content { position:relative; z-index:1; }
-.brand-logo    { width:56px; height:56px; background:linear-gradient(135deg,#00c9a7,#0ea5e9); border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:900; color:#fff; margin-bottom:28px; box-shadow:0 8px 32px rgba(0,201,167,.4); }
+.brand-logo    { width:56px; height:56px; background:linear-gradient(135deg,#00c9a7,#0ea5e9); border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:900; color:#fff; margin-bottom:28px; box-shadow:0 8px 32px rgba(0,201,167,.4); overflow:hidden; }
+.brand-logo img { width:100%; height:100%; object-fit:cover; border-radius:14px; }
 .brand-tagline { display:inline-block; font-size:11px; font-weight:700; letter-spacing:2px; text-transform:uppercase; color:#00c9a7; background:rgba(0,201,167,.12); border:1px solid rgba(0,201,167,.3); padding:4px 12px; border-radius:20px; margin-bottom:20px; }
 .brand-title   { font-size:clamp(1.8rem,3vw,2.6rem); font-weight:800; color:#fff; line-height:1.25; margin-bottom:16px; }
 .brand-title span { color:#00c9a7; }
@@ -329,8 +339,30 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 .btn-left-action.register { background:rgba(0,201,167,.15); border-color:rgba(0,201,167,.5); color:#00c9a7; }
 .btn-left-action.register:hover { background:rgba(0,201,167,.3); }
 
+/* ── Nama perusahaan di left panel ── */
+.brand-company-name {
+    font-size:clamp(1.5rem,2.5vw,2.1rem);
+    font-weight:900;
+    color:#fff;
+    line-height:1.2;
+    margin-bottom:4px;
+}
+.brand-company-powered {
+    font-size:11px;
+    color:rgba(255,255,255,.4);
+    margin-bottom:20px;
+    font-weight:500;
+    letter-spacing:.5px;
+}
+
 /* ══ RIGHT PANEL ══ */
 .right-panel { width:460px; min-width:460px; background:#fff; display:flex; flex-direction:column; justify-content:center; padding:52px 48px; overflow-y:auto; }
+.right-panel-brand { display:flex; align-items:center; gap:10px; margin-bottom:24px; padding-bottom:20px; border-bottom:1px solid #f1f5f9; }
+.right-brand-logo  { width:38px; height:38px; background:linear-gradient(135deg,#00c9a7,#0ea5e9); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:900; color:#fff; flex-shrink:0; overflow:hidden; }
+.right-brand-logo img { width:100%; height:100%; object-fit:cover; border-radius:10px; }
+.right-brand-text .company { font-size:14px; font-weight:800; color:#0f172a; line-height:1.2; }
+.right-brand-text .powered { font-size:10.5px; color:#94a3b8; font-weight:500; }
+
 .form-header { margin-bottom:28px; }
 .form-header h2 { font-size:1.6rem; font-weight:800; color:#0f172a; margin-bottom:5px; }
 .form-header p  { font-size:13.5px; color:#64748b; }
@@ -398,7 +430,8 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 .modal-reg-sidebar { width:220px; min-width:220px; background:linear-gradient(160deg,#0f4c81 0%,#0a2d55 60%,#061a33 100%); padding:28px 20px; display:flex; flex-direction:column; align-items:center; text-align:center; position:relative; overflow:hidden; }
 .sidebar-dots2 { position:absolute; inset:0; background-image:radial-gradient(rgba(255,255,255,.06) 1px,transparent 1px); background-size:24px 24px; }
 .reg-sidebar-inner { position:relative; z-index:1; width:100%; }
-.reg-sidebar-logo  { width:52px; height:52px; background:linear-gradient(135deg,#00c9a7,#0ea5e9); border-radius:14px; display:inline-flex; align-items:center; justify-content:center; font-size:22px; font-weight:900; color:#fff; margin-bottom:12px; box-shadow:0 8px 24px rgba(0,201,167,.4); }
+.reg-sidebar-logo  { width:52px; height:52px; background:linear-gradient(135deg,#00c9a7,#0ea5e9); border-radius:14px; display:inline-flex; align-items:center; justify-content:center; font-size:22px; font-weight:900; color:#fff; margin-bottom:12px; box-shadow:0 8px 24px rgba(0,201,167,.4); overflow:hidden; }
+.reg-sidebar-logo img { width:100%; height:100%; object-fit:cover; border-radius:14px; }
 .reg-sidebar-title { color:#fff; font-size:16px; font-weight:800; margin:0 0 3px; }
 .reg-sidebar-sub   { color:rgba(255,255,255,.5); font-size:11px; margin:0 0 18px; }
 .reg-sidebar-feats { display:flex; flex-direction:column; gap:8px; }
@@ -450,7 +483,8 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 .modal-sidebar::after  { content:''; position:absolute; bottom:-40px; left:-40px; width:140px; height:140px; border-radius:50%; background:radial-gradient(circle,rgba(255,255,255,.05) 0%,transparent 70%); }
 .sidebar-dots { position:absolute; inset:0; background-image:radial-gradient(rgba(255,255,255,.06) 1px,transparent 1px); background-size:24px 24px; }
 .sidebar-content { position:relative; z-index:1; width:100%; }
-.modal-about-logo { width:56px; height:56px; background:linear-gradient(135deg,#00c9a7,#0ea5e9); border-radius:14px; display:inline-flex; align-items:center; justify-content:center; font-size:26px; font-weight:900; color:#fff; margin-bottom:12px; box-shadow:0 8px 24px rgba(0,201,167,.45); }
+.modal-about-logo { width:56px; height:56px; background:linear-gradient(135deg,#00c9a7,#0ea5e9); border-radius:14px; display:inline-flex; align-items:center; justify-content:center; font-size:26px; font-weight:900; color:#fff; margin-bottom:12px; box-shadow:0 8px 24px rgba(0,201,167,.45); overflow:hidden; }
+.modal-about-logo img { width:100%; height:100%; object-fit:cover; border-radius:14px; }
 .sidebar-title  { color:#fff; font-size:18px; font-weight:800; margin:0 0 3px; }
 .sidebar-sub    { color:rgba(255,255,255,.55); font-size:11.5px; margin:0 0 20px; }
 .sidebar-badge  { display:inline-flex; align-items:center; gap:6px; background:rgba(0,201,167,.15); border:1px solid rgba(0,201,167,.35); color:#00c9a7; padding:6px 12px; border-radius:20px; font-size:11.5px; font-weight:700; margin-bottom:20px; }
@@ -515,10 +549,22 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 <div class="left-panel">
     <div class="dots-grid"></div>
     <div class="brand-content">
-        <div class="brand-logo">D</div>
+        <!-- Logo perusahaan -->
+        <div class="brand-logo">
+            <?php if ($logoPerusahaan): ?>
+            <img src="<?= htmlspecialchars($logoPerusahaan) ?>" alt="<?= htmlspecialchars($namaPerusahaan) ?>">
+            <?php else: ?>
+            <?= strtoupper(substr($namaPerusahaan, 0, 1)) ?>
+            <?php endif; ?>
+        </div>
+
         <div class="brand-tagline">Sistem Absensi Digital</div>
-        <h1 class="brand-title">Hadir tepat waktu,<br><span>lebih mudah.</span></h1>
-        <p class="brand-desc">DailyFix membantu perusahaan mengelola kehadiran karyawan secara akurat dengan GPS dan verifikasi foto wajah.</p>
+
+        <!-- Nama perusahaan sebagai judul utama -->
+        <div class="brand-company-name"><?= htmlspecialchars($namaPerusahaan) ?></div>
+        <div class="brand-company-powered">Powered by DailyFix</div>
+
+        <p class="brand-desc">Kelola kehadiran karyawan secara akurat dengan GPS dan verifikasi foto wajah.</p>
         <div class="feature-list">
             <div class="feature-item"><div class="feature-icon"><i class="fas fa-map-location-dot"></i></div> Absensi GPS multi-lokasi real-time</div>
             <div class="feature-item"><div class="feature-icon"><i class="fas fa-camera"></i></div> Verifikasi foto wajah setiap absen</div>
@@ -538,6 +584,22 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 
 <!-- ══ RIGHT PANEL ══ -->
 <div class="right-panel">
+
+    <!-- Brand mini di right panel -->
+    <div class="right-panel-brand">
+        <div class="right-brand-logo">
+            <?php if ($logoPerusahaan): ?>
+            <img src="<?= htmlspecialchars($logoPerusahaan) ?>" alt="<?= htmlspecialchars($namaPerusahaan) ?>">
+            <?php else: ?>
+            <?= strtoupper(substr($namaPerusahaan, 0, 1)) ?>
+            <?php endif; ?>
+        </div>
+        <div class="right-brand-text">
+            <div class="company"><?= htmlspecialchars($namaPerusahaan) ?></div>
+            <div class="powered">Powered by DailyFix</div>
+        </div>
+    </div>
+
     <div class="steps">
         <div class="step-item">
             <div class="step-line <?= $step==='otp'?'done':'' ?>"></div>
@@ -575,7 +637,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
             <label>Alamat Email</label>
             <div class="input-field">
                 <span class="icon"><i class="fas fa-envelope"></i></span>
-                <input type="email" name="email" placeholder="nama@perusahaan.com"
+                <input type="email" name="email" placeholder="masukkan email anda"
                     value="<?= htmlspecialchars($_POST['email'] ?? '') ?>"
                     autocomplete="email" required autofocus>
             </div>
@@ -628,7 +690,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
     <?php endif; ?>
 
     <div class="form-footer">
-        &copy; <?= date('Y') ?> DailyFix &mdash; Develop M. Wira Sb. S.Kom
+        &copy; <?= date('Y') ?> <?= htmlspecialchars($namaPerusahaan) ?> &mdash; Powered by DailyFix
         <div class="btn-mobile-row">
             <button class="btn-mobile-action reg" onclick="openRegister()">
                 <i class="fas fa-user-plus"></i> Daftar Akun
@@ -649,8 +711,14 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
         <div class="modal-reg-sidebar">
             <div class="sidebar-dots2"></div>
             <div class="reg-sidebar-inner">
-                <div class="reg-sidebar-logo">D</div>
-                <div class="reg-sidebar-title">DailyFix</div>
+                <div class="reg-sidebar-logo">
+                    <?php if ($logoPerusahaan): ?>
+                    <img src="<?= htmlspecialchars($logoPerusahaan) ?>" alt="logo">
+                    <?php else: ?>
+                    <?= strtoupper(substr($namaPerusahaan, 0, 1)) ?>
+                    <?php endif; ?>
+                </div>
+                <div class="reg-sidebar-title"><?= htmlspecialchars($namaPerusahaan) ?></div>
                 <div class="reg-sidebar-sub">Buat akun baru</div>
                 <div class="reg-sidebar-feats">
                     <div class="reg-sidebar-feat"><i class="fas fa-key"></i> Login tanpa password</div>
@@ -659,13 +727,12 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
                     <div class="reg-sidebar-feat"><i class="fas fa-shield-halved"></i> Anti fake GPS</div>
                     <div class="reg-sidebar-feat"><i class="fas fa-clock"></i> Aktivasi oleh admin</div>
                 </div>
-                <div class="reg-sidebar-copy">© <?= date('Y') ?> DailyFix</div>
+                <div class="reg-sidebar-copy">© <?= date('Y') ?> <?= htmlspecialchars($namaPerusahaan) ?></div>
             </div>
         </div>
 
         <div class="modal-reg-main">
             <?php if ($regSuccess): ?>
-            <!-- ── Sukses ── -->
             <div class="modal-reg-header">
                 <h4><i class="fas fa-circle-check" style="color:#10b981;margin-right:6px"></i> Pendaftaran Berhasil</h4>
                 <button class="modal-x" onclick="closeRegister()"><i class="fas fa-xmark"></i></button>
@@ -684,14 +751,13 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
                 </div>
             </div>
             <div class="modal-reg-footer">
-                <span>© <?= date('Y') ?> DailyFix</span>
+                <span>© <?= date('Y') ?> <?= htmlspecialchars($namaPerusahaan) ?></span>
                 <button class="close-about" onclick="closeRegister()"><i class="fas fa-xmark"></i> Tutup</button>
             </div>
 
             <?php else: ?>
-            <!-- ── Form ── -->
             <div class="modal-reg-header">
-                <h4><i class="fas fa-user-plus" style="color:#0ea5e9;margin-right:6px"></i> Buat Akun Baru</h4>
+                <h4><i class="fas fa-user-plus" style="color:#0ea5e9;margin-right:6px"></i> Buat Akun — <?= htmlspecialchars($namaPerusahaan) ?></h4>
                 <button class="modal-x" onclick="closeRegister()"><i class="fas fa-xmark"></i></button>
             </div>
             <div class="modal-reg-body">
@@ -716,9 +782,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 
                 <form method="POST" autocomplete="off" id="formRegModal">
                     <input type="hidden" name="action" value="register">
-
                     <div class="m-divider">Data Diri</div>
-
                     <div class="m-input-group">
                         <label>Nama Lengkap <span class="req">*</span></label>
                         <div class="m-input-field">
@@ -727,7 +791,6 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
                                 value="<?= htmlspecialchars($regOldPost['nama'] ?? '') ?>" required>
                         </div>
                     </div>
-
                     <div class="m-grid-2">
                         <div class="m-input-group">
                             <label>NIK / No. Karyawan <span class="req">*</span></label>
@@ -746,7 +809,6 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
                             </div>
                         </div>
                     </div>
-
                     <div class="m-input-group">
                         <label>Alamat Email <span class="req">*</span></label>
                         <div class="m-input-field">
@@ -759,9 +821,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
                             <span>Gunakan email aktif — kode OTP login dikirim ke sini.</span>
                         </div>
                     </div>
-
                     <div class="m-divider">Posisi &amp; Departemen</div>
-
                     <div class="m-grid-2">
                         <div class="m-input-group">
                             <label>Jabatan <span class="req">*</span></label>
@@ -798,11 +858,9 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
                     </div>
                 </form>
             </div>
-
             <div class="modal-reg-footer">
                 <button class="btn-close-modal" onclick="closeRegister()"><i class="fas fa-xmark"></i> Batal</button>
-                <button class="btn-reg-submit" id="btnRegSubmit"
-                    onclick="submitReg()"
+                <button class="btn-reg-submit" id="btnRegSubmit" onclick="submitReg()"
                     <?= (empty($jabatanList)||empty($departemenList))?'disabled':'' ?>>
                     <i class="fas fa-user-plus"></i> Buat Akun
                 </button>
@@ -820,8 +878,14 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
         <div class="modal-sidebar">
             <div class="sidebar-dots"></div>
             <div class="sidebar-content">
-                <div class="modal-about-logo">D</div>
-                <div class="sidebar-title">DailyFix</div>
+                <div class="modal-about-logo">
+                    <?php if ($logoPerusahaan): ?>
+                    <img src="<?= htmlspecialchars($logoPerusahaan) ?>" alt="logo">
+                    <?php else: ?>
+                    <?= strtoupper(substr($namaPerusahaan, 0, 1)) ?>
+                    <?php endif; ?>
+                </div>
+                <div class="sidebar-title"><?= htmlspecialchars($namaPerusahaan) ?></div>
                 <div class="sidebar-sub">Sistem Absensi Digital v<?= APP_VERSION ?? '1.0' ?></div>
                 <div class="sidebar-badge"><i class="fas fa-heart" style="color:#ef4444"></i> Gratis &amp; Bebas</div>
                 <div class="sidebar-features">
@@ -834,7 +898,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
                     <div class="sidebar-feat"><i class="fas fa-chart-bar"></i> Rekap &amp; Laporan PDF</div>
                     <div class="sidebar-feat"><i class="fas fa-building"></i> Multi Perusahaan</div>
                 </div>
-                <div class="sidebar-copy">© <?= date('Y') ?> DailyFix<br>Hak Cipta Dilindungi</div>
+                <div class="sidebar-copy">© <?= date('Y') ?> <?= htmlspecialchars($namaPerusahaan) ?><br>Hak Cipta Dilindungi</div>
             </div>
         </div>
         <div class="modal-main">
@@ -895,7 +959,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
                 </div>
             </div>
             <div class="modal-main-footer">
-                <span>© <?= date('Y') ?> DailyFix — Develop M. Wira Sb. S.Kom</span>
+                <span>© <?= date('Y') ?> <?= htmlspecialchars($namaPerusahaan) ?> — Powered by DailyFix</span>
                 <button class="close-about" onclick="closeAbout()"><i class="fas fa-xmark"></i> Tutup</button>
             </div>
         </div>
@@ -903,7 +967,6 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 </div>
 
 <script>
-// ── OTP Logic ────────────────────────────────────────────────────────────────
 <?php if ($step === 'otp'): ?>
 const boxes = document.querySelectorAll('.otp-box');
 boxes[0]?.focus();
@@ -937,18 +1000,11 @@ const rv=setInterval(()=>{resend--;document.getElementById('resendCount').textCo
 function resendOtp(){window.location.href='<?= APP_URL ?>/login.php?reset=1';}
 <?php endif; ?>
 
-// ── Modal Register ───────────────────────────────────────────────────────────
-function openRegister(){
-    document.getElementById('modalRegister').classList.add('open');
-    document.body.style.overflow='hidden';
-}
+function openRegister(){document.getElementById('modalRegister').classList.add('open');document.body.style.overflow='hidden';}
 function closeRegister(){
     document.getElementById('modalRegister').classList.remove('open');
     document.body.style.overflow='';
-    // Bersihkan URL agar refresh tidak auto-buka modal
-    if (window.location.search) {
-        history.replaceState(null,'','<?= APP_URL ?>/login.php');
-    }
+    if (window.location.search) history.replaceState(null,'','<?= APP_URL ?>/login.php');
 }
 function submitReg(){
     const btn=document.getElementById('btnRegSubmit');
@@ -956,24 +1012,17 @@ function submitReg(){
     btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Memproses...';
     document.getElementById('formRegModal').submit();
 }
-
-// ── Modal Tentang ────────────────────────────────────────────────────────────
-function openAbout() {document.getElementById('modalAbout').classList.add('open'); document.body.style.overflow='hidden';}
-function closeAbout(){document.getElementById('modalAbout').classList.remove('open'); document.body.style.overflow='';}
-
-// ── Copy text ────────────────────────────────────────────────────────────────
+function openAbout(){document.getElementById('modalAbout').classList.add('open');document.body.style.overflow='hidden';}
+function closeAbout(){document.getElementById('modalAbout').classList.remove('open');document.body.style.overflow='';}
 function copyText(text,btn){
     navigator.clipboard.writeText(text).then(()=>{
-        btn.classList.add('copied'); btn.innerHTML='<i class="fas fa-check"></i> Disalin!';
+        btn.classList.add('copied');btn.innerHTML='<i class="fas fa-check"></i> Disalin!';
         setTimeout(()=>{btn.classList.remove('copied');btn.innerHTML='<i class="fas fa-copy"></i> Salin';},2200);
     });
 }
-
-// ── Auto-buka modal jika dari PRG redirect ───────────────────────────────────
 <?php if ($regPosted): ?>
 window.addEventListener('DOMContentLoaded', () => openRegister());
 <?php endif; ?>
 </script>
-
 </body>
 </html>
