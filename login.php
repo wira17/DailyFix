@@ -6,7 +6,7 @@ if (isLoggedIn()) {
     exit;
 }
 
-// ─── Tentukan perusahaan_id secara dinamis & aman ────────────────────────────
+// ─── Tentukan perusahaan_id secara dinamis ───────────────────────────────────
 $perusahaan_id = 1;
 try {
     $dbTemp = getDB();
@@ -32,8 +32,8 @@ try {
     $perusahaanInfo = $stmtPerusahaan->fetch();
 } catch (Exception $e) { $perusahaanInfo = null; }
 
-$namaPerusahaan = $perusahaanInfo['nama']    ?? 'DailyFix';
-$logoPerusahaan = $perusahaanInfo['logo']    ?? '';
+$namaPerusahaan   = $perusahaanInfo['nama']   ?? 'DailyFix';
+$logoPerusahaan   = $perusahaanInfo['logo']   ?? '';
 $alamatPerusahaan = $perusahaanInfo['alamat'] ?? '';
 
 $jabatanList = [];
@@ -50,7 +50,7 @@ try {
     $departemenList = $stmt->fetchAll();
 } catch (Exception $e) { $departemenList = []; }
 
-// ─── Baca flash session register (PRG) ──────────────────────────────────────
+// ─── Flash session register (PRG) ───────────────────────────────────────────
 $regErrors  = [];
 $regSuccess = false;
 $regPosted  = false;
@@ -69,15 +69,15 @@ if (isset($_SESSION['reg_errors'])) {
     unset($_SESSION['reg_errors'], $_SESSION['reg_old']);
 }
 
-// ─── Handle POST: Register (PRG Pattern) ────────────────────────────────────
+// ─── Handle POST: Register ───────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'register') {
     $db            = getDB();
-    $nama          = sanitize($_POST['nama']          ?? '');
-    $nik           = sanitize($_POST['nik']           ?? '');
-    $email_reg     = sanitize($_POST['email_reg']     ?? '');
-    $telepon       = sanitize($_POST['telepon']       ?? '');
-    $jabatan_id    = (int)($_POST['jabatan_id']       ?? 0);
-    $departemen_id = (int)($_POST['departemen_id']    ?? 0);
+    $nama          = sanitize($_POST['nama']       ?? '');
+    $nik           = sanitize($_POST['nik']        ?? '');
+    $email_reg     = sanitize($_POST['email_reg']  ?? '');
+    $telepon       = sanitize($_POST['telepon']    ?? '');
+    $jabatan_id    = (int)($_POST['jabatan_id']    ?? 0);
+    $departemen_id = (int)($_POST['departemen_id'] ?? 0);
 
     $errors = [];
     if (!$nama)   $errors[] = 'Nama lengkap wajib diisi.';
@@ -98,7 +98,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
 
     if (empty($errors)) {
         try {
-            $cols = $db->query("SHOW COLUMNS FROM karyawan")->fetchAll(PDO::FETCH_COLUMN);
+            $cols   = $db->query("SHOW COLUMNS FROM karyawan")->fetchAll(PDO::FETCH_COLUMN);
             $fields = ['perusahaan_id','nik','nama','email','telepon','role','status','tanggal_bergabung'];
             $values = [$perusahaan_id, $nik, $nama, $email_reg, $telepon, 'karyawan', 'nonaktif', date('Y-m-d')];
             if (in_array('jabatan_id',    $cols) && $jabatan_id)    { $fields[] = 'jabatan_id';    $values[] = $jabatan_id; }
@@ -107,6 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
             $placeholders = implode(',', array_fill(0, count($fields), '?'));
             $db->prepare("INSERT INTO karyawan (" . implode(',', $fields) . ") VALUES ($placeholders)")->execute($values);
 
+            // Kirim email konfirmasi registrasi
             try {
                 $jabatanNama = $departemenNama = '';
                 foreach ($jabatanList    as $j) { if ($j['id'] == $jabatan_id)    $jabatanNama    = $j['nama']; }
@@ -141,10 +142,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'regis
                     </div>
                 </div>';
 
-                $smtpStmt = $db->prepare("SELECT id FROM smtp_settings WHERE perusahaan_id = ? AND is_active = 1 LIMIT 1");
-                $smtpStmt->execute([$perusahaan_id]);
+                // ── SMTP global (tanpa perusahaan_id) ──
+                $smtpStmt = $db->prepare("SELECT id FROM smtp_settings WHERE id=1 AND is_active=1 LIMIT 1");
+                $smtpStmt->execute();
                 if ($smtpStmt->fetch()) {
-                    sendSmtpEmail($db, $perusahaan_id, $email_reg, 'Pendaftaran ' . $namaPerusahaan . ' Berhasil — Menunggu Aktivasi', $emailBody);
+                    sendSmtpEmail($db, $email_reg,
+                        'Pendaftaran ' . $namaPerusahaan . ' Berhasil — Menunggu Aktivasi',
+                        $emailBody);
                 }
             } catch (Exception $e) { /* email gagal tidak membatalkan registrasi */ }
 
@@ -176,7 +180,7 @@ $pendingEmail = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'send_otp') {
     $email = sanitize($_POST['email'] ?? '');
     if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $error = 'Masukkan alamat email yang valid.';
+        $error = 'Absensi Perangkat Desa';
     } else {
         $db   = getDB();
         $stmt = $db->prepare("SELECT k.*, p.nama as perusahaan_nama FROM karyawan k
@@ -207,8 +211,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'send_
                 $db->prepare("INSERT INTO otp_login (email, otp, expires_at, ip_address) VALUES (?,?,?,?)")
                    ->execute([$email, $otp, $expires, $ip]);
 
-                $smtpStmt = $db->prepare("SELECT * FROM smtp_settings WHERE perusahaan_id=? AND is_active=1 LIMIT 1");
-                $smtpStmt->execute([$user['perusahaan_id']]);
+                // ── SMTP global (tanpa perusahaan_id) ──
+                $smtpStmt = $db->prepare("SELECT * FROM smtp_settings WHERE id=1 AND is_active=1 LIMIT 1");
+                $smtpStmt->execute();
                 $smtpOk = $smtpStmt->fetch();
 
                 $emailBody = '
@@ -235,8 +240,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'send_
 
                 $sent = false;
                 if ($smtpOk) {
-                    $result = sendSmtpEmail($db, $user['perusahaan_id'], $email, 'Kode OTP Login ' . $namaPerusahaan . ' — ' . $otp, $emailBody);
-                    $sent   = ($result === true);
+                    $result = sendSmtpEmail($db, $email,
+                        'Kode OTP Login ' . $namaPerusahaan . ' — ' . $otp,
+                        $emailBody);
+                    $sent = ($result === true);
                 }
                 if (!$sent) $_SESSION['dev_otp'] = $otp;
 
@@ -324,45 +331,28 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 .left-panel::after  { content:''; position:absolute; bottom:-80px; left:-80px; width:320px; height:320px; border-radius:50%; background:radial-gradient(circle,rgba(255,255,255,.06) 0%,transparent 70%); }
 .dots-grid { position:absolute; inset:0; background-image:radial-gradient(rgba(255,255,255,.07) 1px,transparent 1px); background-size:32px 32px; }
 .brand-content { position:relative; z-index:1; }
-.brand-logo    { width:56px; height:56px; background:linear-gradient(135deg,#00c9a7,#0ea5e9); border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:900; color:#fff; margin-bottom:28px; box-shadow:0 8px 32px rgba(0,201,167,.4); overflow:hidden; }
+.brand-logo { width:56px; height:56px; background:linear-gradient(135deg,#00c9a7,#0ea5e9); border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:900; color:#fff; margin-bottom:28px; box-shadow:0 8px 32px rgba(0,201,167,.4); overflow:hidden; }
 .brand-logo img { width:100%; height:100%; object-fit:cover; border-radius:14px; }
 .brand-tagline { display:inline-block; font-size:11px; font-weight:700; letter-spacing:2px; text-transform:uppercase; color:#00c9a7; background:rgba(0,201,167,.12); border:1px solid rgba(0,201,167,.3); padding:4px 12px; border-radius:20px; margin-bottom:20px; }
-.brand-title   { font-size:clamp(1.8rem,3vw,2.6rem); font-weight:800; color:#fff; line-height:1.25; margin-bottom:16px; }
-.brand-title span { color:#00c9a7; }
-.brand-desc    { font-size:14px; color:rgba(255,255,255,.55); line-height:1.75; max-width:380px; margin-bottom:36px; }
-.feature-list  { display:flex; flex-direction:column; gap:12px; margin-bottom:40px; }
-.feature-item  { display:flex; align-items:center; gap:12px; color:rgba(255,255,255,.7); font-size:13px; }
-.feature-icon  { width:30px; height:30px; border-radius:8px; background:rgba(255,255,255,.08); display:flex; align-items:center; justify-content:center; font-size:12px; color:#00c9a7; flex-shrink:0; }
-.left-btn-row  { display:flex; gap:10px; flex-wrap:wrap; }
+.brand-company-name { font-size:clamp(1.5rem,2.5vw,2.1rem); font-weight:900; color:#fff; line-height:1.2; margin-bottom:4px; }
+.brand-company-powered { font-size:11px; color:rgba(255,255,255,.4); margin-bottom:20px; font-weight:500; letter-spacing:.5px; }
+.brand-desc { font-size:14px; color:rgba(255,255,255,.55); line-height:1.75; max-width:380px; margin-bottom:36px; }
+.feature-list { display:flex; flex-direction:column; gap:12px; margin-bottom:40px; }
+.feature-item { display:flex; align-items:center; gap:12px; color:rgba(255,255,255,.7); font-size:13px; }
+.feature-icon { width:30px; height:30px; border-radius:8px; background:rgba(255,255,255,.08); display:flex; align-items:center; justify-content:center; font-size:12px; color:#00c9a7; flex-shrink:0; }
+.left-btn-row { display:flex; gap:10px; flex-wrap:wrap; }
 .btn-left-action { display:inline-flex; align-items:center; gap:7px; background:rgba(255,255,255,.08); border:1.5px solid rgba(255,255,255,.18); color:rgba(255,255,255,.75); padding:8px 18px; border-radius:20px; font-size:12.5px; font-weight:600; font-family:inherit; cursor:pointer; transition:all .2s; }
 .btn-left-action:hover { background:rgba(0,201,167,.2); border-color:#00c9a7; color:#00c9a7; }
 .btn-left-action.register { background:rgba(0,201,167,.15); border-color:rgba(0,201,167,.5); color:#00c9a7; }
 .btn-left-action.register:hover { background:rgba(0,201,167,.3); }
 
-/* ── Nama perusahaan di left panel ── */
-.brand-company-name {
-    font-size:clamp(1.5rem,2.5vw,2.1rem);
-    font-weight:900;
-    color:#fff;
-    line-height:1.2;
-    margin-bottom:4px;
-}
-.brand-company-powered {
-    font-size:11px;
-    color:rgba(255,255,255,.4);
-    margin-bottom:20px;
-    font-weight:500;
-    letter-spacing:.5px;
-}
-
 /* ══ RIGHT PANEL ══ */
 .right-panel { width:460px; min-width:460px; background:#fff; display:flex; flex-direction:column; justify-content:center; padding:52px 48px; overflow-y:auto; }
 .right-panel-brand { display:flex; align-items:center; gap:10px; margin-bottom:24px; padding-bottom:20px; border-bottom:1px solid #f1f5f9; }
-.right-brand-logo  { width:38px; height:38px; background:linear-gradient(135deg,#00c9a7,#0ea5e9); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:900; color:#fff; flex-shrink:0; overflow:hidden; }
+.right-brand-logo { width:38px; height:38px; background:linear-gradient(135deg,#00c9a7,#0ea5e9); border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:900; color:#fff; flex-shrink:0; overflow:hidden; }
 .right-brand-logo img { width:100%; height:100%; object-fit:cover; border-radius:10px; }
 .right-brand-text .company { font-size:14px; font-weight:800; color:#0f172a; line-height:1.2; }
 .right-brand-text .powered { font-size:10.5px; color:#94a3b8; font-weight:500; }
-
 .form-header { margin-bottom:28px; }
 .form-header h2 { font-size:1.6rem; font-weight:800; color:#0f172a; margin-bottom:5px; }
 .form-header p  { font-size:13.5px; color:#64748b; }
@@ -374,6 +364,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 .input-field input:focus { border-color:#0f4c81; background:#fff; box-shadow:0 0 0 3px rgba(15,76,129,.1); }
 .input-field input::placeholder { color:#94a3b8; }
 
+/* OTP boxes */
 .otp-wrap { display:flex; gap:10px; justify-content:center; margin:20px 0; }
 .otp-box { width:48px; height:56px; border:2px solid #e2e8f0; border-radius:12px; font-size:22px; font-weight:800; font-family:'JetBrains Mono',monospace; text-align:center; color:#0f172a; background:#f8fafc; outline:none; transition:all .2s; caret-color:#0f4c81; }
 .otp-box:focus  { border-color:#0f4c81; box-shadow:0 0 0 3px rgba(15,76,129,.12); background:#fff; }
@@ -386,6 +377,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 .dev-otp-box { background:#fef3c7; border:2px dashed #f59e0b; border-radius:12px; padding:14px 16px; margin-bottom:16px; text-align:center; }
 .dev-otp-box .dev-label { font-size:11px; font-weight:700; color:#92400e; text-transform:uppercase; letter-spacing:1px; }
 
+/* Alerts */
 .alert-pending { background:#fffbeb; border:1px solid #fcd34d; border-left:4px solid #f59e0b; border-radius:10px; padding:14px 16px; margin-bottom:16px; animation:shake .35s ease; }
 .alert-pending-title { display:flex; align-items:center; gap:8px; font-weight:700; color:#92400e; font-size:14px; margin-bottom:6px; }
 .alert-pending p { font-size:13px; color:#92400e; line-height:1.65; margin:0; }
@@ -398,6 +390,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 .btn-resend { background:none; border:none; color:#0f4c81; font-weight:700; cursor:pointer; font-size:13px; font-family:inherit; padding:0; text-decoration:underline; }
 .btn-resend:disabled { color:#94a3b8; cursor:not-allowed; text-decoration:none; }
 
+/* Steps */
 .steps { display:flex; align-items:center; margin-bottom:28px; }
 .step-item { flex:1; text-align:center; position:relative; }
 .step-circle { width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; margin:0 auto 6px; position:relative; z-index:1; }
@@ -417,7 +410,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 .btn-mobile-action.reg { border-color:#bbf7d0; color:#15803d; background:#f0fdf4; }
 .btn-mobile-action.reg:hover { background:#dcfce7; }
 
-/* ══ MODAL BASE ══ */
+/* ══ MODAL ══ */
 .modal-overlay { position:fixed; inset:0; background:rgba(10,22,40,.75); backdrop-filter:blur(6px); z-index:9999; display:flex; align-items:center; justify-content:center; padding:16px; opacity:0; pointer-events:none; transition:opacity .3s; }
 .modal-overlay.open { opacity:1; pointer-events:all; }
 .modal-box { background:#fff; border-radius:20px; width:100%; box-shadow:0 32px 80px rgba(0,0,0,.35); overflow:hidden; transform:scale(.96) translateY(16px); transition:transform .3s cubic-bezier(.34,1.56,.64,1); }
@@ -425,7 +418,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 .modal-x { background:#f1f5f9; border:none; color:#64748b; width:30px; height:30px; border-radius:8px; cursor:pointer; font-size:13px; display:flex; align-items:center; justify-content:center; transition:all .2s; flex-shrink:0; }
 .modal-x:hover { background:#ef4444; color:#fff; }
 
-/* ══ MODAL REGISTER ══ */
+/* Modal Register */
 #modalRegister .modal-box { max-width:860px; max-height:92vh; display:flex; }
 .modal-reg-sidebar { width:220px; min-width:220px; background:linear-gradient(160deg,#0f4c81 0%,#0a2d55 60%,#061a33 100%); padding:28px 20px; display:flex; flex-direction:column; align-items:center; text-align:center; position:relative; overflow:hidden; }
 .sidebar-dots2 { position:absolute; inset:0; background-image:radial-gradient(rgba(255,255,255,.06) 1px,transparent 1px); background-size:24px 24px; }
@@ -442,7 +435,6 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 .modal-reg-header { display:flex; align-items:center; justify-content:space-between; padding:18px 24px; border-bottom:1px solid #f1f5f9; flex-shrink:0; }
 .modal-reg-header h4 { font-size:16px; font-weight:800; color:#0f172a; margin:0; }
 .modal-reg-body { padding:22px 26px; flex:1; }
-
 .m-input-group { margin-bottom:14px; }
 .m-input-group label { display:block; font-size:12.5px; font-weight:600; color:#374151; margin-bottom:5px; }
 .m-input-group label .req { color:#ef4444; margin-left:2px; }
@@ -461,13 +453,11 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 .m-alert-error { display:flex; align-items:flex-start; gap:9px; padding:10px 13px; background:#fef2f2; border:1px solid #fecaca; border-left:4px solid #ef4444; border-radius:9px; margin-bottom:12px; font-size:12.5px; color:#991b1b; animation:shake .35s ease; }
 .m-alert-error ul { margin:0; padding-left:1rem; }
 .m-no-data { display:flex; align-items:center; gap:8px; background:#fff7ed; border:1px solid #fed7aa; border-left:4px solid #f97316; border-radius:9px; padding:9px 13px; font-size:12px; color:#9a3412; margin-bottom:12px; }
-
 .reg-success-wrap { text-align:center; padding:28px 20px; }
 .reg-success-icon { width:68px; height:68px; border-radius:50%; background:linear-gradient(135deg,#10b981,#00c9a7); display:flex; align-items:center; justify-content:center; font-size:1.9rem; color:#fff; margin:0 auto 18px; box-shadow:0 8px 28px rgba(16,185,129,.35); animation:popIn .5s cubic-bezier(.68,-.55,.265,1.55); }
 @keyframes popIn { from{transform:scale(0);opacity:0} to{transform:scale(1);opacity:1} }
 .reg-success-wrap h3 { font-size:1.25rem; font-weight:800; color:#0f172a; margin-bottom:8px; }
 .reg-success-wrap p  { font-size:13px; color:#64748b; margin-bottom:18px; line-height:1.65; }
-
 .modal-reg-footer { padding:14px 24px; border-top:1px solid #f1f5f9; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; flex-wrap:wrap; gap:10px; }
 .modal-reg-footer span { font-size:11.5px; color:#94a3b8; }
 .btn-reg-submit { background:linear-gradient(135deg,#0f4c81,#0a2d55); color:#fff; border:none; padding:10px 24px; border-radius:10px; font-size:14px; font-weight:700; font-family:inherit; cursor:pointer; display:flex; align-items:center; gap:7px; transition:all .2s; }
@@ -476,7 +466,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 .btn-close-modal { background:#f1f5f9; border:none; color:#64748b; padding:10px 18px; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; display:flex; align-items:center; gap:6px; transition:all .2s; }
 .btn-close-modal:hover { background:#e2e8f0; }
 
-/* ══ MODAL TENTANG ══ */
+/* Modal Tentang */
 #modalAbout .modal-box { max-width:860px; max-height:92vh; display:flex; }
 .modal-sidebar { width:230px; min-width:230px; background:linear-gradient(160deg,#0f4c81 0%,#0a2d55 60%,#061a33 100%); padding:28px 22px; display:flex; flex-direction:column; align-items:center; text-align:center; position:relative; overflow:hidden; }
 .modal-sidebar::before { content:''; position:absolute; top:-60px; right:-60px; width:180px; height:180px; border-radius:50%; background:radial-gradient(circle,rgba(0,201,167,.2) 0%,transparent 70%); }
@@ -522,7 +512,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 .close-about { background:#0f4c81; border:none; color:#fff; padding:9px 22px; border-radius:10px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; display:flex; align-items:center; gap:6px; transition:all .2s; }
 .close-about:hover { background:#0a2d55; }
 
-/* ── Responsive ── */
+/* Responsive */
 @media(max-width:640px) {
     #modalRegister .modal-box, #modalAbout .modal-box { flex-direction:column; max-width:100%; max-height:95vh; border-radius:16px; }
     .modal-reg-sidebar, .modal-sidebar { width:100%; min-width:0; padding:14px 18px; flex-direction:row; text-align:left; align-items:center; gap:12px; }
@@ -549,7 +539,6 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
 <div class="left-panel">
     <div class="dots-grid"></div>
     <div class="brand-content">
-        <!-- Logo perusahaan -->
         <div class="brand-logo">
             <?php if ($logoPerusahaan): ?>
             <img src="<?= htmlspecialchars($logoPerusahaan) ?>" alt="<?= htmlspecialchars($namaPerusahaan) ?>">
@@ -557,13 +546,9 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
             <?= strtoupper(substr($namaPerusahaan, 0, 1)) ?>
             <?php endif; ?>
         </div>
-
         <div class="brand-tagline">Sistem Absensi Digital</div>
-
-        <!-- Nama perusahaan sebagai judul utama -->
         <div class="brand-company-name"><?= htmlspecialchars($namaPerusahaan) ?></div>
         <div class="brand-company-powered">Powered by DailyFix</div>
-
         <p class="brand-desc">Kelola kehadiran karyawan secara akurat dengan GPS dan verifikasi foto wajah.</p>
         <div class="feature-list">
             <div class="feature-item"><div class="feature-icon"><i class="fas fa-map-location-dot"></i></div> Absensi GPS multi-lokasi real-time</div>
@@ -572,20 +557,14 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
             <div class="feature-item"><div class="feature-icon"><i class="fas fa-key"></i></div> Login OTP email, tanpa password</div>
         </div>
         <div class="left-btn-row">
-            <button class="btn-left-action register" onclick="openRegister()">
-                <i class="fas fa-user-plus"></i> Daftar Akun
-            </button>
-            <button class="btn-left-action" onclick="openAbout()">
-                <i class="fas fa-circle-info"></i> Tentang Aplikasi
-            </button>
+            <button class="btn-left-action register" onclick="openRegister()"><i class="fas fa-user-plus"></i> Daftar Akun</button>
+            <button class="btn-left-action" onclick="openAbout()"><i class="fas fa-circle-info"></i> Tentang Aplikasi</button>
         </div>
     </div>
 </div>
 
 <!-- ══ RIGHT PANEL ══ -->
 <div class="right-panel">
-
-    <!-- Brand mini di right panel -->
     <div class="right-panel-brand">
         <div class="right-brand-logo">
             <?php if ($logoPerusahaan): ?>
@@ -618,7 +597,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
     <?php if ($step === 'email'): ?>
     <div class="form-header">
         <h2>Selamat datang 👋</h2>
-        <p>Masukkan email Anda, kami kirim kode OTP untuk masuk</p>
+        <p>Absensi Digital Perangkat Desa</p>
     </div>
     <?php if ($error === 'PENDING'): ?>
     <div class="alert-pending">
@@ -642,9 +621,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
                     autocomplete="email" required autofocus>
             </div>
         </div>
-        <button type="submit" class="btn-submit">
-            <i class="fas fa-paper-plane"></i> Kirim Kode OTP
-        </button>
+        <button type="submit" class="btn-submit"><i class="fas fa-paper-plane"></i> Kirim Kode OTP</button>
     </form>
 
     <?php else: ?>
@@ -662,6 +639,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
     <?php if ($devOtp): ?>
     <div class="dev-otp-box">
         <div class="dev-label">⚠️ SMTP belum dikonfigurasi — Mode Dev</div>
+      
     </div>
     <?php endif; ?>
     <form method="POST" id="formOtp" autocomplete="off">
@@ -692,22 +670,15 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
     <div class="form-footer">
         &copy; <?= date('Y') ?> <?= htmlspecialchars($namaPerusahaan) ?> &mdash; Powered by DailyFix
         <div class="btn-mobile-row">
-            <button class="btn-mobile-action reg" onclick="openRegister()">
-                <i class="fas fa-user-plus"></i> Daftar Akun
-            </button>
-            <button class="btn-mobile-action" onclick="openAbout()">
-                <i class="fas fa-circle-info"></i> Tentang
-            </button>
+            <button class="btn-mobile-action reg" onclick="openRegister()"><i class="fas fa-user-plus"></i> Daftar Akun</button>
+            <button class="btn-mobile-action" onclick="openAbout()"><i class="fas fa-circle-info"></i> Tentang</button>
         </div>
     </div>
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════
-     MODAL REGISTER
-═════════════════════════════════════════════════════════════════ -->
+<!-- ══ MODAL REGISTER ══ -->
 <div class="modal-overlay" id="modalRegister" onclick="if(event.target===this)closeRegister()">
     <div class="modal-box">
-
         <div class="modal-reg-sidebar">
             <div class="sidebar-dots2"></div>
             <div class="reg-sidebar-inner">
@@ -730,7 +701,6 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
                 <div class="reg-sidebar-copy">© <?= date('Y') ?> <?= htmlspecialchars($namaPerusahaan) ?></div>
             </div>
         </div>
-
         <div class="modal-reg-main">
             <?php if ($regSuccess): ?>
             <div class="modal-reg-header">
@@ -765,21 +735,18 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
                     <i class="fas fa-circle-info" style="color:#0ea5e9;flex-shrink:0"></i>
                     <span>Login menggunakan <strong>kode OTP</strong> yang dikirim ke email — tidak perlu password.</span>
                 </div>
-
                 <?php if (!empty($regErrors)): ?>
                 <div class="m-alert-error">
                     <i class="fas fa-circle-exclamation" style="flex-shrink:0;margin-top:1px"></i>
                     <ul><?php foreach ($regErrors as $e): ?><li><?= htmlspecialchars($e) ?></li><?php endforeach; ?></ul>
                 </div>
                 <?php endif; ?>
-
                 <?php if (empty($jabatanList) || empty($departemenList)): ?>
                 <div class="m-no-data">
                     <i class="fas fa-triangle-exclamation" style="flex-shrink:0"></i>
                     <span>Belum ada data <?= empty($jabatanList)?'jabatan':'' ?><?= (empty($jabatanList)&&empty($departemenList))?' &amp; ':'' ?><?= empty($departemenList)?'departemen':'' ?>. Hubungi admin.</span>
                 </div>
                 <?php endif; ?>
-
                 <form method="POST" autocomplete="off" id="formRegModal">
                     <input type="hidden" name="action" value="register">
                     <div class="m-divider">Data Diri</div>
@@ -787,25 +754,22 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
                         <label>Nama Lengkap <span class="req">*</span></label>
                         <div class="m-input-field">
                             <span class="icon"><i class="fas fa-user"></i></span>
-                            <input type="text" name="nama" placeholder="Nama lengkap sesuai KTP"
-                                value="<?= htmlspecialchars($regOldPost['nama'] ?? '') ?>" required>
+                            <input type="text" name="nama" placeholder="Nama lengkap sesuai KTP" value="<?= htmlspecialchars($regOldPost['nama'] ?? '') ?>" required>
                         </div>
                     </div>
                     <div class="m-grid-2">
                         <div class="m-input-group">
-                            <label>NIK / No. Karyawan <span class="req">*</span></label>
+                            <label>NIK / NIP <span class="req">*</span></label>
                             <div class="m-input-field">
                                 <span class="icon"><i class="fas fa-id-card"></i></span>
-                                <input type="text" name="nik" placeholder="Contoh: EMP001"
-                                    value="<?= htmlspecialchars($regOldPost['nik'] ?? '') ?>" required>
+                                <input type="text" name="nik" placeholder="Contoh: EMP001" value="<?= htmlspecialchars($regOldPost['nik'] ?? '') ?>" required>
                             </div>
                         </div>
                         <div class="m-input-group">
                             <label>No. Telepon</label>
                             <div class="m-input-field">
                                 <span class="icon"><i class="fas fa-phone"></i></span>
-                                <input type="tel" name="telepon" placeholder="08xxxxxxxxxx"
-                                    value="<?= htmlspecialchars($regOldPost['telepon'] ?? '') ?>">
+                                <input type="tel" name="telepon" placeholder="08xxxxxxxxxx" value="<?= htmlspecialchars($regOldPost['telepon'] ?? '') ?>">
                             </div>
                         </div>
                     </div>
@@ -813,15 +777,14 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
                         <label>Alamat Email <span class="req">*</span></label>
                         <div class="m-input-field">
                             <span class="icon"><i class="fas fa-envelope"></i></span>
-                            <input type="email" name="email_reg" placeholder="nama@email.com"
-                                value="<?= htmlspecialchars($regOldPost['email_reg'] ?? '') ?>" required>
+                            <input type="email" name="email_reg" placeholder="nama@email.com" value="<?= htmlspecialchars($regOldPost['email_reg'] ?? '') ?>" required>
                         </div>
                         <div style="display:flex;align-items:center;gap:4px;margin-top:4px;font-size:11px;color:#0ea5e9">
                             <i class="fas fa-circle-info" style="font-size:10px"></i>
                             <span>Gunakan email aktif — kode OTP login dikirim ke sini.</span>
                         </div>
                     </div>
-                    <div class="m-divider">Posisi &amp; Departemen</div>
+                    <div class="m-divider">Posisi &amp; Nama Desa</div>
                     <div class="m-grid-2">
                         <div class="m-input-group">
                             <label>Jabatan <span class="req">*</span></label>
@@ -830,9 +793,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
                                 <select name="jabatan_id" required <?= empty($jabatanList)?'disabled':'' ?>>
                                     <option value="">— Pilih Jabatan —</option>
                                     <?php foreach ($jabatanList as $j): ?>
-                                    <option value="<?= $j['id'] ?>" <?= (($regOldPost['jabatan_id']??'')==$j['id'])?'selected':'' ?>>
-                                        <?= htmlspecialchars($j['nama']) ?>
-                                    </option>
+                                    <option value="<?= $j['id'] ?>" <?= (($regOldPost['jabatan_id']??'')==$j['id'])?'selected':'' ?>><?= htmlspecialchars($j['nama']) ?></option>
                                     <?php endforeach; ?>
                                     <?php if (empty($jabatanList)): ?><option disabled>Belum ada data</option><?php endif; ?>
                                 </select>
@@ -840,15 +801,13 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
                             </div>
                         </div>
                         <div class="m-input-group">
-                            <label>Departemen <span class="req">*</span></label>
+                            <label>Nama Desa <span class="req">*</span></label>
                             <div class="m-input-field">
                                 <span class="icon"><i class="fas fa-building"></i></span>
                                 <select name="departemen_id" required <?= empty($departemenList)?'disabled':'' ?>>
-                                    <option value="">— Pilih Departemen —</option>
+                                    <option value="">— Pilih Desa —</option>
                                     <?php foreach ($departemenList as $d): ?>
-                                    <option value="<?= $d['id'] ?>" <?= (($regOldPost['departemen_id']??'')==$d['id'])?'selected':'' ?>>
-                                        <?= htmlspecialchars($d['nama']) ?>
-                                    </option>
+                                    <option value="<?= $d['id'] ?>" <?= (($regOldPost['departemen_id']??'')==$d['id'])?'selected':'' ?>><?= htmlspecialchars($d['nama']) ?></option>
                                     <?php endforeach; ?>
                                     <?php if (empty($departemenList)): ?><option disabled>Belum ada data</option><?php endif; ?>
                                 </select>
@@ -860,8 +819,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
             </div>
             <div class="modal-reg-footer">
                 <button class="btn-close-modal" onclick="closeRegister()"><i class="fas fa-xmark"></i> Batal</button>
-                <button class="btn-reg-submit" id="btnRegSubmit" onclick="submitReg()"
-                    <?= (empty($jabatanList)||empty($departemenList))?'disabled':'' ?>>
+                <button class="btn-reg-submit" id="btnRegSubmit" onclick="submitReg()" <?= (empty($jabatanList)||empty($departemenList))?'disabled':'' ?>>
                     <i class="fas fa-user-plus"></i> Buat Akun
                 </button>
             </div>
@@ -870,9 +828,7 @@ body { font-family:'Plus Jakarta Sans',sans-serif; min-height:100vh; display:fle
     </div>
 </div>
 
-<!-- ══════════════════════════════════════════════════════════════
-     MODAL TENTANG APLIKASI
-═════════════════════════════════════════════════════════════════ -->
+<!-- ══ MODAL TENTANG ══ -->
 <div class="modal-overlay" id="modalAbout" onclick="if(event.target===this)closeAbout()">
     <div class="modal-box">
         <div class="modal-sidebar">
@@ -992,32 +948,51 @@ boxes.forEach((box, i) => {
         else if (boxes[text.length]) boxes[text.length].focus();
     });
 });
-let total=300;
-const timerEl=document.getElementById('timerVal'),timerWrap=document.getElementById('timerWrap');
-const iv=setInterval(()=>{total--;timerEl.textContent=Math.floor(total/60)+':'+String(total%60).padStart(2,'0');if(total<=0){clearInterval(iv);timerEl.textContent='Kadaluarsa';timerWrap.classList.add('expired');document.getElementById('btnVerify').disabled=true;}},1000);
-let resend=60;
-const rv=setInterval(()=>{resend--;document.getElementById('resendCount').textContent=resend;if(resend<=0){clearInterval(rv);const b=document.getElementById('btnResend');b.disabled=false;b.textContent='Kirim Ulang OTP';}},1000);
-function resendOtp(){window.location.href='<?= APP_URL ?>/login.php?reset=1';}
+let total = 300;
+const timerEl = document.getElementById('timerVal'), timerWrap = document.getElementById('timerWrap');
+const iv = setInterval(()=>{
+    total--;
+    timerEl.textContent = Math.floor(total/60) + ':' + String(total%60).padStart(2,'0');
+    if (total <= 0) {
+        clearInterval(iv);
+        timerEl.textContent = 'Kadaluarsa';
+        timerWrap.classList.add('expired');
+        document.getElementById('btnVerify').disabled = true;
+    }
+}, 1000);
+let resend = 60;
+const rv = setInterval(()=>{
+    resend--;
+    document.getElementById('resendCount').textContent = resend;
+    if (resend <= 0) {
+        clearInterval(rv);
+        const b = document.getElementById('btnResend');
+        b.disabled = false;
+        b.textContent = 'Kirim Ulang OTP';
+    }
+}, 1000);
+function resendOtp(){ window.location.href = '<?= APP_URL ?>/login.php?reset=1'; }
 <?php endif; ?>
 
-function openRegister(){document.getElementById('modalRegister').classList.add('open');document.body.style.overflow='hidden';}
+function openRegister(){ document.getElementById('modalRegister').classList.add('open'); document.body.style.overflow='hidden'; }
 function closeRegister(){
     document.getElementById('modalRegister').classList.remove('open');
-    document.body.style.overflow='';
+    document.body.style.overflow = '';
     if (window.location.search) history.replaceState(null,'','<?= APP_URL ?>/login.php');
 }
 function submitReg(){
-    const btn=document.getElementById('btnRegSubmit');
-    btn.disabled=true;
-    btn.innerHTML='<i class="fas fa-spinner fa-spin"></i> Memproses...';
+    const btn = document.getElementById('btnRegSubmit');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Memproses...';
     document.getElementById('formRegModal').submit();
 }
-function openAbout(){document.getElementById('modalAbout').classList.add('open');document.body.style.overflow='hidden';}
-function closeAbout(){document.getElementById('modalAbout').classList.remove('open');document.body.style.overflow='';}
-function copyText(text,btn){
+function openAbout(){ document.getElementById('modalAbout').classList.add('open'); document.body.style.overflow='hidden'; }
+function closeAbout(){ document.getElementById('modalAbout').classList.remove('open'); document.body.style.overflow=''; }
+function copyText(text, btn){
     navigator.clipboard.writeText(text).then(()=>{
-        btn.classList.add('copied');btn.innerHTML='<i class="fas fa-check"></i> Disalin!';
-        setTimeout(()=>{btn.classList.remove('copied');btn.innerHTML='<i class="fas fa-copy"></i> Salin';},2200);
+        btn.classList.add('copied');
+        btn.innerHTML = '<i class="fas fa-check"></i> Disalin!';
+        setTimeout(()=>{ btn.classList.remove('copied'); btn.innerHTML='<i class="fas fa-copy"></i> Salin'; }, 2200);
     });
 }
 <?php if ($regPosted): ?>

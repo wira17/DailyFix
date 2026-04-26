@@ -203,13 +203,14 @@ function getNamaHari($angka) {
 // ============================================
 // Helper: Kirim Email via SMTP (dari smtp_settings)
 // ============================================
-function sendSmtpEmail($db, $perusahaan_id, $to, $subject, $htmlBody) {
-    $stmt = $db->prepare("SELECT * FROM smtp_settings WHERE perusahaan_id=? AND is_active=1 LIMIT 1");
-    $stmt->execute([$perusahaan_id]);
+function sendSmtpEmail($db, $to, $subject, $html) {
+    $stmt = $db->prepare("SELECT * FROM smtp_settings WHERE id=1 AND is_active=1 LIMIT 1");
+    $stmt->execute();
     $s = $stmt->fetch();
     if (!$s) return 'Konfigurasi SMTP belum diatur atau tidak aktif.';
 
-$pw = $s['password'];
+    // ✅ decode password yang disimpan base64
+    $pw = base64_decode($s['password']);
 
     $paths = [
         __DIR__ . '/../vendor/phpmailer/phpmailer/src/PHPMailer.php',
@@ -237,24 +238,23 @@ $pw = $s['password'];
             $mail->SMTPSecure = $s['encryption'] === 'ssl'
                 ? PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS
                 : PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->Port       = $s['port'];
-            $mail->CharSet    = 'UTF-8';
+            $mail->Port    = $s['port'];
+            $mail->CharSet = 'UTF-8';
             $mail->setFrom($s['from_email'], $s['from_name']);
             $mail->addAddress($to);
             $mail->Subject = $subject;
             $mail->isHTML(true);
-            $mail->Body    = $htmlBody;
+            $mail->Body    = $html;  // ✅ bukan $htmlBody
             $mail->send();
             return true;
         } catch (Exception $e) {
             return $e->getMessage();
         }
     } else {
-        // Fallback mail()
         $headers  = "From: {$s['from_name']} <{$s['from_email']}>\r\n";
         $headers .= "MIME-Version: 1.0\r\n";
         $headers .= "Content-Type: text/html; charset=UTF-8\r\n";
-        return mail($to, $subject, $htmlBody, $headers)
+        return mail($to, $subject, $html, $headers)  // ✅ bukan $htmlBody
             ? true
             : 'Fungsi mail() gagal. Install PHPMailer untuk SMTP Gmail.';
     }
